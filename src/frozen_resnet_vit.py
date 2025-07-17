@@ -11,9 +11,11 @@ class CombinedResNetViT(nn.Module):
         cfg,
         resnet_variant: str,
         num_classes: int,
+        interpolate_pos_encoding
     ):
         super().__init__()
         # 1. Backbone CNN
+        self.interpolate_pos_encoding = interpolate_pos_encoding
         assert resnet_variant in ['resnet18', 'resnet50', 'resnet101']
         self.resnet = getattr(models, resnet_variant)(pretrained=True)
         
@@ -91,9 +93,7 @@ class CombinedResNetViT(nn.Module):
         # 4. Transformer encoding
         encoder_outputs, key_states, value_states = self.vit_encoder(
             embeddings,
-            output_attentions=False,
-            output_hidden_states=False,
-            return_dict=False
+            interpolate_pos_encoding=self.interpolate_pos_encoding
         )
         seq_out = encoder_outputs[0]  # [B, N+1, hidden]
         seq_out = self.vit_layernorm(seq_out)
