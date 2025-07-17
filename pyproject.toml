@@ -1,0 +1,22 @@
+[project]
+name = "MIC"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "a.espahbodi",email = "dev.amir.espahbodi@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch (>=2.7.1,<3.0.0)",
+    "torchvision (>=0.22.1,<0.23.0)",
+    "transformers (>=4.53.2,<5.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "medical_image_classification", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
