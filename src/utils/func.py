@@ -12,7 +12,7 @@ from operator import getitem
 from functools import reduce
 from torch.utils.data import DataLoader
 
-from utils.const import regression_loss
+from src.utils.const import regression_loss
 
 
 def mean_and_std(train_dataset, batch_size, num_workers):

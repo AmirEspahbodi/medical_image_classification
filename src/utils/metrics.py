@@ -1,6 +1,6 @@
 import torch
 import torcheval.metrics as tm
-from utils.func import print_msg
+from src.utils.func import print_msg
 
 
 class Estimator():
