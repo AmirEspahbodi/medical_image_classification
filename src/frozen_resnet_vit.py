@@ -7,13 +7,9 @@ from .builder import build_frozen_encoder
 class CombinedResNetViT(nn.Module):
     def __init__(
         self,
+        cfg,
         resnet_variant: str,
-        vit_cfg_path: str,
-        token_imp: str,
-        token_ratio: float,
-        layers_to_extract: str,
         num_classes: int,
-        cfg
     ):
         super().__init__()
         # 1. Backbone CNN
