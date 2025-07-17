@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from .builder import build_frozen_encoder
+from transformers import ViTConfig
 
 
 class CombinedResNetViT(nn.Module):
@@ -41,7 +42,10 @@ class CombinedResNetViT(nn.Module):
         self.vit_pooler = frozen_vit.vit.pooler
 
         # 3. Projection of CNN features to ViT hidden size
-        hidden_size = cfg.hidden_size
+        frozen_config = ViTConfig.from_pretrained(cfg.network.pretrained_path)
+        hidden_size = frozen_config.hidden_size // cfg.network.side_reduction_ratio
+        
+
         # channels from ResNet layer2 & layer3
         c2 = self.resnet.layer2[-1].conv3.out_channels
         c3 = self.resnet.layer3[-1].conv3.out_channels
