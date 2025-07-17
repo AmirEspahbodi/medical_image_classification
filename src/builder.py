@@ -1,7 +1,7 @@
 import torch
 
 from transformers import ViTConfig
-from utils.func import print_msg, select_out_features
+from src.utils.func import print_msg, select_out_features
 
 from .bridge import FineGrainedPromptTuning, FusionModule
 from .side_vit import ViTForImageClassification as SideViT
