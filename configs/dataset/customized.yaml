@@ -1,0 +1,14 @@
+name: customized
+
+# data_path: /kaggle/working/COVID_IEEE
+# preload_path: /kaggle/working/covid_preload_data
+# save_path: /kaggle/working/covid_runs
+
+data_path: /kaggle/working/my-dataset-split # path to the dataset
+preload_path: /kaggle/working/customized_preload_data # path to the preloaded data
+save_path: /kaggle/working/my_dataset # path to save the experiment results
+input_size: 512 # image resolution for the LPM
+num_classes: 2 # number of classes
+mean: [0.485, 0.456, 0.406] # 'auto' or a list of three numbers for RGB
+std: [0.229, 0.224, 0.225] # 'auto' or a list of three numbers for RGB
+learning_rate: 0.0001 # dataset-specific learning rate
