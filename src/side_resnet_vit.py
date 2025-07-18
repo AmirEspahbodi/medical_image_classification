@@ -133,7 +133,7 @@ class ResNetSideViTClassifier(nn.Module):
 
         # 3) Side-ViT forward with fine-grained states
         vit_out = self.side_vit(
-            embeddings, key_states, value_states, interpolate_pos_encoding=True
+            x, key_states, value_states, interpolate_pos_encoding=True
         )
         pooled = vit_out.pooler_output  # (B, hidden_size)
 
