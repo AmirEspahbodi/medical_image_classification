@@ -95,7 +95,7 @@ def build_frozen_encoder(cfg):
     for p in frozen_encoder.parameters():
         p.requires_grad = False
 
-    return frozen_encoder
+    return frozen_encoder, frozen_config
 
 
 def parse_layers(layers_to_extract):

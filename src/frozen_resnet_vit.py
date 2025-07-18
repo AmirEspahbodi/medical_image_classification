@@ -1,7 +1,6 @@
 # import torch
 # import torch.nn as nn
 # import torchvision.models as models
-# from transformers import ViTConfig
 
 
 # class CombinedResNetViT(nn.Module):
@@ -107,6 +106,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from .builder import build_frozen_encoder
+from transformers import ViTConfig
 
 # assuming build_frozen_encoder and parse_layers are imported
 # from your_module import build_frozen_encoder, parse_layers
@@ -127,7 +127,7 @@ class CombinedResNetViT(nn.Module):
         self.resnet = getattr(models, resnet_variant)(pretrained=True)
 
         # 2. Frozen ViT encoder
-        frozen_vit = build_frozen_encoder(
+        frozen_vit, frozen_config = build_frozen_encoder(
             cfg
         ).to(cfg.base.device)
         
@@ -138,7 +138,7 @@ class CombinedResNetViT(nn.Module):
         self.vit_pooler = frozen_vit.vit.pooler
 
         # 3. Projection of CNN features to ViT hidden size
-        hidden_size = cfg.hidden_size
+        hidden_size = frozen_config.hidden_size
         c2 = self.resnet.layer2[-1].conv3.out_channels if hasattr(self.resnet.layer2[-1], 'conv3') else self.resnet.layer2[-1].conv2.out_channels
         c3 = self.resnet.layer3[-1].conv3.out_channels if hasattr(self.resnet.layer3[-1], 'conv3') else self.resnet.layer3[-1].conv2.out_channels
         self.proj2 = nn.Linear(c2, hidden_size)
