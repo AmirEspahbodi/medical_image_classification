@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.func import one_hot
-from utils.const import regression_loss
+from src.utils.func import one_hot
+from src.utils.const import regression_loss
 
 
 class WarpedLoss():
