@@ -103,7 +103,7 @@ class ResNetSideViTClassifier(nn.Module):
         # f3_tokens = self.proj3(out3).flatten(2).transpose(1,2)
 
         # 3) Side-ViT forward with fine-grained states
-        vit_out = self.side_vit(pixel_values=x, fine_grained_states=prompts)
+        vit_out = self.side_vit(pixel_values=x, fine_grained_states=prompts, interpolate_pos_encoding=True)
         pooled = vit_out.pooler_output  # (B, hidden_size)
 
         # 4) Final FC + softmax
