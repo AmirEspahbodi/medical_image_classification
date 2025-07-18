@@ -60,7 +60,7 @@ class CombinedResNetViT(nn.Module):
             nn.Softmax(dim=-1)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, interpolate_pos_encoding=True) -> torch.Tensor:
         B = x.size(0)
         # 1. CNN feature extraction
         # Run through conv1..layer1
@@ -93,7 +93,7 @@ class CombinedResNetViT(nn.Module):
         # 4. Transformer encoding
         encoder_outputs, key_states, value_states = self.vit_encoder(
             embeddings,
-            interpolate_pos_encoding=self.interpolate_pos_encoding
+            interpolate_pos_encoding=interpolate_pos_encoding
         )
         seq_out = encoder_outputs[0]  # [B, N+1, hidden]
         seq_out = self.vit_layernorm(seq_out)
