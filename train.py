@@ -6,7 +6,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from utils.func import *
+from src.utils.func import *
 from src.loss import *
 from src.scheduler import *
 

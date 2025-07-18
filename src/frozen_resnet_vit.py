@@ -89,6 +89,7 @@ class CombinedResNetViT(nn.Module):
         tokens = torch.cat([tokens2, tokens3], dim=1)
         cls_tokens = self.vit_embeddings.cls_token.expand(B, -1, -1)
         embeddings = torch.cat([cls_tokens, tokens], dim=1)
+
         # Add only CLS positional embedding to avoid mismatches
         embeddings[:, :1, :] += self.vit_embeddings.position_embeddings[:, :1, :]
         embeddings = self.vit_embeddings.dropout(embeddings)
