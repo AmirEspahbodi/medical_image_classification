@@ -191,7 +191,7 @@ class CombinedResNetViT(nn.Module):
             output_attentions=False,
             output_hidden_states=False,
             return_dict=False,
-            interpolate_pos_encoding=True
+            # interpolate_pos_encoding=True
         )
         seq_out = encoder_outputs[0]
         seq_out = self.vit_layernorm(seq_out)
