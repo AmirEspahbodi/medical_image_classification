@@ -44,10 +44,11 @@ class ResNetSideViTClassifier(nn.Module):
         super().__init__()
         self.device = device
 
-        # ResNet backbone
+        # 1) ResNet backbone
         self.backbone = get_resnet_backbone(resnet_name, pretrained)
+        self.backbone = self.backbone.to(self.device)
 
-        # Side-ViT config and model
+        # 2) Side-ViT configuration & model
         base_cfg = ViTConfig.from_pretrained(side_pretrained_path)
         hidden_size = base_cfg.hidden_size
         side_dim = hidden_size // side_reduction_ratio
@@ -62,20 +63,18 @@ class ResNetSideViTClassifier(nn.Module):
             hidden_dropout_prob=0.0,
             attention_probs_dropout_prob=0.0
         )
-        self.side_vit = SideViT(side_cfg)
+        self.side_vit = SideViT(side_cfg).to(self.device)
 
-        # Project ResNet block2 & block3 outputs to ViT hidden size
+        # 3) Project ResNet block2 & block3 outputs to ViT hidden size
         block2 = self.backbone[2][-1]
         block3 = self.backbone[3][-1]
         c2 = block2.conv3.out_channels if hasattr(block2, 'conv3') else block2.conv2.out_channels
         c3 = block3.conv3.out_channels if hasattr(block3, 'conv3') else block3.conv2.out_channels
-        self.proj2 = nn.Conv2d(c2, hidden_size, kernel_size=1)
-        self.proj3 = nn.Conv2d(c3, hidden_size, kernel_size=1)
+        self.proj2 = nn.Conv2d(c2, hidden_size, kernel_size=1).to(self.device)
+        self.proj3 = nn.Conv2d(c3, hidden_size, kernel_size=1).to(self.device)
 
-        # Final classifier
-        self.classifier = nn.Linear(hidden_size, num_classes)
-
-        # Move all to device
+        # 4) Final classifier
+        self.classifier = nn.Linear(hidden_size, num_classes).to(self.device)
 
     def forward(
         self,
@@ -86,18 +85,27 @@ class ResNetSideViTClassifier(nn.Module):
         """
         x: (B,3,H,W);  f2_tokens: (B,N2,D);  f3_tokens: (B,N3,D)
         """
+        # Ensure inputs on correct device and dtype
         x = x.to(self.device)
-        # Pass through ResNet to maintain compatibility if needed
-        out0 = self.backbone[0](x)
-        out1 = self.backbone[1](out0)
-        out2 = self.backbone[2](out1)
-        out3 = self.backbone[3](out2)
-
-        # Ensure tokens on correct device
         prompts = [f2_tokens.to(self.device), f3_tokens.to(self.device)]
 
+        # 1) Forward ResNet blocks (cpu->cuda safe since params are on device)
+        out = x
+        for idx in range(4):
+            out = self.backbone[idx](out)
+            if idx == 1:
+                out2 = out
+            elif idx == 2:
+                out3 = out
+
+        # 2) (Optional) recompute tokens if not precomputed
+        # f2_tokens = self.proj2(out2).flatten(2).transpose(1,2)
+        # f3_tokens = self.proj3(out3).flatten(2).transpose(1,2)
+
+        # 3) Side-ViT forward with fine-grained states
         vit_out = self.side_vit(pixel_values=x, fine_grained_states=prompts)
         pooled = vit_out.pooler_output  # (B, hidden_size)
 
+        # 4) Final FC + softmax
         logits = self.classifier(pooled)
         return F.softmax(logits, dim=-1)
