@@ -132,6 +132,7 @@ class ResNetSideViTClassifier(nn.Module):
         # f3_tokens = self.proj3(out3).flatten(2).transpose(1,2)
 
         # 3) Side-ViT forward with fine-grained states
+        print(f"key_states.shape {key_states.shape}")
         vit_out = self.side_vit(
             x, key_states, value_states, interpolate_pos_encoding=True
         )
