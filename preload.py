@@ -23,7 +23,7 @@ def main(cfg):
         return
 
     print('Preloading {} dataset...'.format(cfg.dataset.name))
-    combined_resnet_vit = CombinedResNetViT(cfg, "resnet50", 3)
+    combined_resnet_vit = CombinedResNetViT(cfg, "resnet50", cfg.dataset.num_classes)
     
     dataset = generate_dataset(cfg)
     preload_dataset(cfg, dataset, combined_resnet_vit)
