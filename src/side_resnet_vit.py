@@ -71,7 +71,7 @@ class ResNetSideViTClassifier(nn.Module):
         self.classifier = nn.Linear(hidden_size, num_classes)
         self.device = device
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor:
         """
         x: input images, shape (B,3,H,W).
         Returns softmax logits of shape (B, num_classes).
@@ -99,7 +99,7 @@ class ResNetSideViTClassifier(nn.Module):
         # 3) Side-ViT forward with fine-grained states
         vit_outputs = self.side_vit(
             pixel_values=x,
-            fine_grained_states=[f2_tokens, f3_tokens]
+            fine_grained_states=[key_states, value_states]
         )
         # ViTForImageClassification returns ImageClassifierOutput
         pooled = vit_outputs.pooler_output  # (B, hidden_size)
