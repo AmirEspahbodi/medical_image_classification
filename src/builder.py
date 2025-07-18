@@ -10,7 +10,7 @@ from .frozen_vit import ViTForImageClassification as FrozenViT
 
 
 def generate_model(cfg):
-    model = build_model(cfg)
+    model, _ = build_model(cfg)
     model = model.to(cfg.base.device)
 
     # the computation of the number of learnable parameters only works when the preloading is disabled
@@ -77,7 +77,7 @@ def build_model(cfg):
     side_encoder = SideViT(side_config)
 
     model = FineGrainedPromptTuning(side_encoder, fusion_module)
-    return model
+    return model, vit_config.hidden_size
 
 
 def build_frozen_encoder(cfg):
