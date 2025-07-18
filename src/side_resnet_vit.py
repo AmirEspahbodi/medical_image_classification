@@ -78,16 +78,12 @@ class ResNetSideViTClassifier(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
-        f2_tokens: torch.Tensor,
-        f3_tokens: torch.Tensor
-    ) -> torch.Tensor:
+        x: torch.Tensor,key_states, value_states) -> torch.Tensor:
         """
         x: (B,3,H,W);  f2_tokens: (B,N2,D);  f3_tokens: (B,N3,D)
         """
         # Ensure inputs on correct device and dtype
         x = x.to(self.device)
-        prompts = [f2_tokens.to(self.device), f3_tokens.to(self.device)]
 
         # 1) Forward ResNet blocks (cpu->cuda safe since params are on device)
         out = x
@@ -104,9 +100,7 @@ class ResNetSideViTClassifier(nn.Module):
 
         # 3) Side-ViT forward with fine-grained states
         vit_out = self.side_vit(
-            pixel_values=x,
-            fine_grained_states=prompts,
-            interpolate_pos_encoding=True
+            x, key_states, value_states
         )
         pooled = vit_out.pooler_output  # (B, hidden_size)
 
