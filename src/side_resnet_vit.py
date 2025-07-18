@@ -90,6 +90,7 @@ class ResNetSideViTClassifier(nn.Module):
         self,
         x: torch.Tensor,key_states, value_states) -> torch.Tensor:
          # Ensure same device
+        print(f"x.shape = {x.shape}")
         device = x.device
         if next(self.parameters()).device != device:
             self.to(device)
