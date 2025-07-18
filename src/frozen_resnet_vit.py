@@ -122,7 +122,7 @@ class CombinedResNetViT(nn.Module):
             cfg
         )
 
-        self.frozen_vit = frozen_vit.to(cfg.base.device)
+        frozen_vit = frozen_vit.to(cfg.base.device)
         print(f"type of frozen_vit = {type(frozen_vit)}")
         print(f"type of frozen_vit.vit = {type(frozen_vit.vit)}")
         print(f"type of frozen_vit.vit.pooler = {type(frozen_vit.vit.pooler)}")
@@ -131,10 +131,10 @@ class CombinedResNetViT(nn.Module):
         print(f"type of frozen_vit.vit.embeddings = {type(frozen_vit.vit.embeddings)}")
         
         # Extract embeddings, encoder, norm, pooler
-        self.vit_embeddings = self.frozen_vit.vit.embeddings
-        self.vit_encoder = self.frozen_vit.vit.encoder
-        self.vit_layernorm = self.frozen_vit.vit.layernorm
-        self.vit_pooler = self.frozen_vit.vit.pooler
+        self.vit_embeddings = frozen_vit.vit.embeddings
+        self.vit_encoder = frozen_vit.vit.encoder
+        self.vit_layernorm = frozen_vit.vit.layernorm
+        self.vit_pooler = frozen_vit.vit.pooler
         
 
         # 3. Projection of CNN features to ViT hidden size
@@ -188,11 +188,11 @@ class CombinedResNetViT(nn.Module):
         embeddings = self.vit_embeddings.dropout(embeddings)
 
         # 4. Transformer encoding
-        encoder_outputs, key_states, value_states = self.frozen_vit(
+        encoder_outputs, key_states, value_states = self.vit_encoder(
             embeddings,
             # output_attentions=False,
             # output_hidden_states=False,
-            interpolate_pos_encoding=True
+            # interpolate_pos_encoding=True
         )
         # seq_out = encoder_outputs[0]
         # seq_out = self.vit_layernorm(seq_out)
