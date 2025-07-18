@@ -190,9 +190,7 @@ class CombinedResNetViT(nn.Module):
         # 4. Transformer encoding
         encoder_outputs, key_states, value_states = self.vit_encoder(
             embeddings,
-            output_attentions=False,
-            output_hidden_states=False,
-            return_dict=False,
+            interpolate_pos_encoding=True
             # interpolate_pos_encoding=True
         )
         # seq_out = encoder_outputs[0]
