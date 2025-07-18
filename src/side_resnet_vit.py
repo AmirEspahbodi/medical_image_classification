@@ -39,15 +39,21 @@ class ResNetSideViTClassifier(nn.Module):
         num_classes: int,
         side_reduction_ratio: int = 2,
         prompt_reduction_ratio: int = 2,
+        pool_size2: int = 14,
+        pool_size3: int = 7,
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ):
         super().__init__()
         self.device = device
 
-        # 1) ResNet backbone
-        self.backbone = get_resnet_backbone(resnet_name, pretrained)
-        self.backbone = self.backbone.to(self.device)
+        # 1. Backbone CNN
+        assert resnet_name in ['resnet18', 'resnet50', 'resnet101'], "Unsupported ResNet variant"
+        self.resnet = getattr(models, resnet_name)(pretrained=True)
 
+        # Pooling to reduce tokens
+        self.pool2 = nn.AdaptiveAvgPool2d((pool_size2, pool_size2))
+        self.pool3 = nn.AdaptiveAvgPool2d((pool_size3, pool_size3))
+        
         # 2) Side-ViT configuration & model
         base_cfg = ViTConfig.from_pretrained(side_pretrained_path)
         hidden_size = base_cfg.hidden_size
@@ -66,33 +72,59 @@ class ResNetSideViTClassifier(nn.Module):
         self.side_vit = SideViT(side_cfg).to(self.device)
 
         # 3) Project ResNet block2 & block3 outputs to ViT hidden size
-        block2 = self.backbone[2][-1]
-        block3 = self.backbone[3][-1]
-        c2 = block2.conv3.out_channels if hasattr(block2, 'conv3') else block2.conv2.out_channels
-        c3 = block3.conv3.out_channels if hasattr(block3, 'conv3') else block3.conv2.out_channels
-        self.proj2 = nn.Conv2d(c2, hidden_size, kernel_size=1).to(self.device)
-        self.proj3 = nn.Conv2d(c3, hidden_size, kernel_size=1).to(self.device)
+        # 3. Projection of CNN features to ViT hidden size
+        hidden_size = side_cfg.hidden_size
+        c2 = self.resnet.layer2[-1].conv3.out_channels if hasattr(self.resnet.layer2[-1], 'conv3') else self.resnet.layer2[-1].conv2.out_channels
+        c3 = self.resnet.layer3[-1].conv3.out_channels if hasattr(self.resnet.layer3[-1], 'conv3') else self.resnet.layer3[-1].conv2.out_channels
+        self.proj2 = nn.Linear(c2, hidden_size)
+        self.proj3 = nn.Linear(c3, hidden_size)
 
-        # 4) Final classifier
-        self.classifier = nn.Linear(hidden_size, num_classes).to(self.device)
+        # 4. Classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, num_classes),
+            nn.Softmax(dim=-1)
+        )
+
 
     def forward(
         self,
         x: torch.Tensor,key_states, value_states) -> torch.Tensor:
-        """
-        x: (B,3,H,W);  f2_tokens: (B,N2,D);  f3_tokens: (B,N3,D)
-        """
-        # Ensure inputs on correct device and dtype
-        x = x.to(self.device)
+         # Ensure same device
+        device = x.device
+        if next(self.parameters()).device != device:
+            self.to(device)
 
-        # 1) Forward ResNet blocks (cpu->cuda safe since params are on device)
-        out = x
-        for idx in range(4):
-            out = self.backbone[idx](out)
-            if idx == 1:
-                out2 = out
-            elif idx == 2:
-                out3 = out
+        # 1. CNN feature extraction up to layer3
+        feat = self.resnet.conv1(x)
+        feat = self.resnet.bn1(feat)
+        feat = self.resnet.relu(feat)
+        feat = self.resnet.maxpool(feat)
+        feat = self.resnet.layer1(feat)
+        out2 = self.resnet.layer2(feat)
+        out3 = self.resnet.layer3(out2)
+
+        # 2. Reduce token count via pooling
+        out2 = self.pool2(out2)  # [B, C2, pool2, pool2]
+        out3 = self.pool3(out3)  # [B, C3, pool3, pool3]
+
+        # Flatten spatial dims -> tokens
+        B, C2, H2, W2 = out2.shape
+        tokens2 = out2.flatten(2).permute(0, 2, 1)
+        B, C3, H3, W3 = out3.shape
+        tokens3 = out3.flatten(2).permute(0, 2, 1)
+
+        # Project to hidden size
+        tokens2 = self.proj2(tokens2)
+        tokens3 = self.proj3(tokens3)
+
+        # 3. Prepare embeddings: CLS + tokens + CLS pos encoding
+        tokens = torch.cat([tokens2, tokens3], dim=1)
+        cls_tokens = self.vit_embeddings.cls_token.expand(B, -1, -1)
+        embeddings = torch.cat([cls_tokens, tokens], dim=1)
+
+        # Add only CLS positional embedding to avoid mismatches
+        embeddings[:, :1, :] += self.vit_embeddings.position_embeddings[:, :1, :]
+        embeddings = self.vit_embeddings.dropout(embeddings)
 
         # 2) (Optional) recompute tokens if not precomputed
         # f2_tokens = self.proj2(out2).flatten(2).transpose(1,2)
@@ -100,8 +132,7 @@ class ResNetSideViTClassifier(nn.Module):
 
         # 3) Side-ViT forward with fine-grained states
         vit_out = self.side_vit(
-            x, key_states, value_states, 
-            interpolate_pos_encoding=True
+            embeddings, key_states, value_states, interpolate_pos_encoding=True
         )
         pooled = vit_out.pooler_output  # (B, hidden_size)
 
