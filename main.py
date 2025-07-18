@@ -44,7 +44,7 @@ def main(cfg):
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
     frozen_encoder, model = generate_model(cfg)
-    ResNetSideViTClassifier("resnet18", True, cfg.network.pretrained_path, cfg.dataset.num_classes)
+    model = ResNetSideViTClassifier("resnet18", True, cfg.network.pretrained_path, cfg.dataset.num_classes)
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
         cfg=cfg,
