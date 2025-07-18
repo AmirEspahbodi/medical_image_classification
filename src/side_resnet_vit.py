@@ -119,12 +119,12 @@ class ResNetSideViTClassifier(nn.Module):
 
         # 3. Prepare embeddings: CLS + tokens + CLS pos encoding
         tokens = torch.cat([tokens2, tokens3], dim=1)
-        cls_tokens = self.vit_embeddings.cls_token.expand(B, -1, -1)
+        cls_tokens = self.side_vit.vit.embeddings.cls_token.expand(B, -1, -1)
         embeddings = torch.cat([cls_tokens, tokens], dim=1)
 
         # Add only CLS positional embedding to avoid mismatches
-        embeddings[:, :1, :] += self.vit_embeddings.position_embeddings[:, :1, :]
-        embeddings = self.vit_embeddings.dropout(embeddings)
+        embeddings[:, :1, :] += self.side_vit.vit.embeddings.position_embeddings[:, :1, :]
+        embeddings = self.side_vit.vit.embeddings.dropout(embeddings)
 
         # 2) (Optional) recompute tokens if not precomputed
         # f2_tokens = self.proj2(out2).flatten(2).transpose(1,2)
