@@ -121,7 +121,14 @@ class CombinedResNetViT(nn.Module):
         frozen_vit, frozen_config = build_frozen_encoder(
             cfg
         )
+
         frozen_vit = frozen_vit.to(cfg.base.device)
+        print(f"type of frozen_vit = {type(frozen_vit)}")
+        print(f"type of frozen_vit.vit = {type(frozen_vit.vit)}")
+        print(f"type of frozen_vit.vit.pooler = {type(frozen_vit.vit.pooler)}")
+        print(f"type of frozen_vit.vit.layernorm = {type(frozen_vit.vit.layernorm)}")
+        print(f"type of frozen_vit.vit.encoder = {type(frozen_vit.vit.encoder)}")
+        print(f"type of frozen_vit.vit.embeddings = {type(frozen_vit.vit.embeddings)}")
         
         # Extract embeddings, encoder, norm, pooler
         self.vit_embeddings = frozen_vit.vit.embeddings
@@ -129,6 +136,7 @@ class CombinedResNetViT(nn.Module):
         self.vit_layernorm = frozen_vit.vit.layernorm
         self.vit_pooler = frozen_vit.vit.pooler
         
+
         # 3. Projection of CNN features to ViT hidden size
         hidden_size = frozen_config.hidden_size
         c2 = self.resnet.layer2[-1].conv3.out_channels if hasattr(self.resnet.layer2[-1], 'conv3') else self.resnet.layer2[-1].conv2.out_channels
