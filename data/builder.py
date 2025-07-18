@@ -4,7 +4,7 @@ from torchvision import datasets
 
 from .transforms import data_transforms, simple_transform
 from .dataset import PreloadImageFolder, AsymetricImageFolder
-from utils.func import mean_and_std, print_dataset_info
+from src.utils.func import mean_and_std, print_dataset_info
 
 
 def generate_dataset(cfg):
