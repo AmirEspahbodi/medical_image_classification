@@ -8,6 +8,10 @@ from .side_vit import ViTForImageClassification as SideViT
 
 
 def get_resnet_backbone(name: str, pretrained: bool = True):
+    """
+    Returns a ResNet backbone truncated before the final pooling & FC layer.
+    Supported: 'resnet18', 'resnet50', 'resnet101'.
+    """
     if name not in ['resnet18', 'resnet50', 'resnet101']:
         raise ValueError(f"Unsupported backbone: {name}")
     backbone = getattr(models, name)(pretrained=pretrained)
@@ -28,6 +32,14 @@ def get_resnet_backbone(name: str, pretrained: bool = True):
 
 
 class ResNetSideViTClassifier(nn.Module):
+    """
+    Combines a ResNet (blocks 1-4) backbone with a Side-ViT.
+    Extracts feature maps from ResNet blocks 2 and 3,
+    projects them to ViT hidden size, and injects as fine-grained
+    prompts into Side-ViT. The Side-ViT's pooler output is
+    fed to a final FC + softmax for classification.
+    """
+
     def __init__(
         self,
         resnet_name: str,
@@ -61,9 +73,11 @@ class ResNetSideViTClassifier(nn.Module):
         self.side_vit = SideViT(side_cfg).to(device)
 
         # 3) Project ResNet features to Side-ViT hidden size
-        #    Block2 out channels = backbone.layer2[-1].conv3.out_channels
-        c2 = self.backbone[2][-1].conv3.out_channels
-        c3 = self.backbone[3][-1].conv3.out_channels
+        # Determine channel dims dynamically for block2 & block3
+        block2 = self.backbone[2][-1]
+        block3 = self.backbone[3][-1]
+        c2 = block2.conv3.out_channels if hasattr(block2, 'conv3') else block2.conv2.out_channels
+        c3 = block3.conv3.out_channels if hasattr(block3, 'conv3') else block3.conv2.out_channels
         self.proj2 = nn.Conv2d(c2, hidden_size, kernel_size=1)
         self.proj3 = nn.Conv2d(c3, hidden_size, kernel_size=1)
 
@@ -84,10 +98,9 @@ class ResNetSideViTClassifier(nn.Module):
         out1 = self.backbone[1](out0)
         out2 = self.backbone[2](out1)   # feature map from block2
         out3 = self.backbone[3](out2)   # feature map from block3
-        # we ignore block4 here
 
         # 2) Project and flatten for prompts
-        #   shapes: (B, hidden_size, H2, W2) -> (B, num_patches2, hidden_size)
+        # shapes: (B, hidden_size, H2, W2) -> (B, num_patches2, hidden_size)
         f2 = self.proj2(out2)
         B, C, H2, W2 = f2.shape
         f2_tokens = f2.flatten(2).transpose(1, 2)
@@ -101,7 +114,6 @@ class ResNetSideViTClassifier(nn.Module):
             pixel_values=x,
             fine_grained_states=[key_states, value_states]
         )
-        # ViTForImageClassification returns ImageClassifierOutput
         pooled = vit_outputs.pooler_output  # (B, hidden_size)
 
         # 4) Final FC + softmax
