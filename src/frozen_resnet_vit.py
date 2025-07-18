@@ -129,7 +129,8 @@ class CombinedResNetViT(nn.Module):
         # 2. Frozen ViT encoder
         frozen_vit, frozen_config = build_frozen_encoder(
             cfg
-        ).to(cfg.base.device)
+        )
+        frozen_vit = frozen_vit.to(cfg.base.device)
         
         # Extract embeddings, encoder, norm, pooler
         self.vit_embeddings = frozen_vit.vit.embeddings
