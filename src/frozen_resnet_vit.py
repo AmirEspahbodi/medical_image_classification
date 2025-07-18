@@ -179,9 +179,12 @@ class CombinedResNetViT(nn.Module):
         # 3. Prepare embeddings: concat tokens with CLS & positional embeddings
         tokens = torch.cat([tokens2, tokens3], dim=1)  # [B, N, hidden]
         B = x.size(0)
+        # prepend CLS token
         cls_tokens = self.vit_embeddings.cls_token.expand(B, -1, -1)
-        embeddings = torch.cat([cls_tokens, tokens], dim=1)
-        embeddings = embeddings + self.vit_embeddings.position_embeddings[:, :embeddings.size(1), :]
+        embeddings = torch.cat([cls_tokens, tokens], dim=1)  # [B, 1+N, hidden]
+        # add only CLS positional embedding (others skipped due to mismatch)
+        pos_cls = self.vit_embeddings.position_embeddings[:, :1, :]
+        embeddings[:, :1, :] = embeddings[:, :1, :] + pos_cls
         embeddings = self.vit_embeddings.dropout(embeddings)
 
         # 4. Transformer encoding
