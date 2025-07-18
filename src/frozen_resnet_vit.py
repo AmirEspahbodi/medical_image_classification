@@ -188,17 +188,17 @@ class CombinedResNetViT(nn.Module):
         embeddings = self.vit_embeddings.dropout(embeddings)
 
         # 4. Transformer encoding
-        encoder_outputs = self.vit_encoder(
+        encoder_outputs, key_states, value_states = self.vit_encoder(
             embeddings,
             output_attentions=False,
             output_hidden_states=False,
             return_dict=False,
             # interpolate_pos_encoding=True
         )
-        seq_out = encoder_outputs[0]
-        seq_out = self.vit_layernorm(seq_out)
-        pooled = self.vit_pooler(seq_out)
+        # seq_out = encoder_outputs[0]
+        # seq_out = self.vit_layernorm(seq_out)
+        # pooled = self.vit_pooler(seq_out)
 
-        # 5. Classification
-        logits = self.classifier(pooled)
-        return logits
+        # # 5. Classification
+        # logits = self.classifier(pooled)
+        return encoder_outputs, key_states, value_states
