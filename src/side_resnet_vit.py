@@ -16,8 +16,6 @@ class ResNetSideViTClassifier(nn.Module):
         pretrained: bool = True,
     ):
         super().__init__()
-        sidevit_params = sidevit_params or {}
-
         # Load ResNet backbone
         if resnet_variant == 'resnet18':
             backbone = models.resnet18(pretrained=pretrained)

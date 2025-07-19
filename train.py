@@ -65,7 +65,6 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             y = select_target_type(y, cfg.train.criterion)
 
             # forward
-            print(f"X_side.shape = {X_side.shape}")
             y_pred = model(X_side, key_states, value_states)
             loss = loss_function(y_pred, y)      
 
