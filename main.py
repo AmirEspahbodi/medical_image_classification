@@ -53,7 +53,7 @@ def main(cfg):
         cfg=cfg,
         resnet_variant='resnet50',
         pretrained=True,
-    )
+    ).to(cfg.base.device)
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
         cfg=cfg,
