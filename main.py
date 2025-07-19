@@ -44,7 +44,6 @@ def main(cfg):
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
     frozen_encoder, side_vit_model = generate_model(cfg)
-    model = ResNetSideViTClassifier("resnet18", True, cfg.network.pretrained_path, cfg.dataset.num_classes)
 
     print(f"type cfg = {type(cfg)}")
     resnet_side_vit_model = ResNetSideViTClassifier(
@@ -67,13 +66,13 @@ def main(cfg):
 
     print('This is the performance of the final model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'final_weights.pt')
-    load_weights(model, checkpoint)
-    evaluate(cfg, frozen_encoder, model, test_dataset, estimator)
+    load_weights(resnet_side_vit_model, checkpoint)
+    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
 
     print('This is the performance of the best validation model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'best_validation_weights.pt')
-    load_weights(model, checkpoint)
-    evaluate(cfg, frozen_encoder, model, test_dataset, estimator)
+    load_weights(resnet_side_vit_model, checkpoint)
+    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
 
 
 def set_seed(seed, deterministic=False):
