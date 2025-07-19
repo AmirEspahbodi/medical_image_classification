@@ -37,9 +37,9 @@ class ResNetSideViTClassifier(nn.Module):
             backbone.relu,
             backbone.maxpool
         )
-        self.layer1 = backbone.layer1  # (B, c1, 56, 56)
-        self.layer2 = backbone.layer2  # (B, c2, 28, 28)
-        self.layer3 = backbone.layer3  # (B, c3, 14, 14)
+        self.layer1 = backbone.layer1  # (B, c1, H/4, W/4)
+        self.layer2 = backbone.layer2  # (B, c2, H/8, W/8)
+        self.layer3 = backbone.layer3  # (B, c3, H/16, W/16)
 
         # Projection: reduce channels to Side-ViT's expected input channels
         # We'll use 1x1 conv as "FC" per spatial location
@@ -56,19 +56,19 @@ class ResNetSideViTClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
         # Backbone feature extraction
-        x = self.stem(x)        # (B, 64, 56, 56)
-        x = self.layer1(x)      # (B, c1, 56, 56)
-        f2 = self.layer2(x)     # (B, c2, 28, 28)
-        f3 = self.layer3(f2)    # (B, c3, 14, 14)
+        x = self.stem(x)        # (B, 64, 32, 32)
+        x = self.layer1(x)      # (B, c1, 32, 32)
+        f2 = self.layer2(x)     # (B, c2, 16, 16)
+        f3 = self.layer3(f2)    # (B, c3, 8, 8)
 
         # Upsample f3 to f2's spatial dims
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
 
         # Concatenate
-        feats = torch.cat([f2, f3_up], dim=1)  # (B, c2+c3, 28, 28)
+        feats = torch.cat([f2, f3_up], dim=1)  # (B, c2+c3, 16, 16)
 
         # Project channels
-        feats = self.proj_conv(feats)         # (B, in_ch, 28, 28)
+        feats = self.proj_conv(feats)         # (B, in_ch, 16, 16)
 
         # Upsample to 224x224 for Side-ViT
         feats = F.interpolate(feats, size=(224, 224), mode='bilinear', align_corners=False)
