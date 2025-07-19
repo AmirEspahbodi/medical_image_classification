@@ -2,142 +2,81 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-from transformers import ViTConfig
+from .bridge import FineGrainedPromptTuning
+from typing import Any
 
-from .side_vit import ViTForImageClassification as SideViT
 
+class ResNetSideViTClassifier(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        vit_embed_dim: int,
+        side_vit: FineGrainedPromptTuning,
+        cfg: Any,
+        resnet_variant: str = 'resnet18',
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Load ResNet backbone up to layer3
+        if resnet_variant == 'resnet18':
+            backbone = models.resnet18(pretrained=pretrained)
+            c2, c3 = 128, 256
+        elif resnet_variant == 'resnet50':
+            backbone = models.resnet50(pretrained=pretrained)
+            c2, c3 = 512, 1024
+        elif resnet_variant == 'resnet101':
+            backbone = models.resnet101(pretrained=pretrained)
+            c2, c3 = 512, 1024
+        else:
+            raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
 
-def get_resnet_backbone(name: str, pretrained: bool = True):
-    if name not in ['resnet18', 'resnet50', 'resnet101']:
-        raise ValueError(f"Unsupported backbone: {name}")
-    backbone = getattr(models, name)(pretrained=pretrained)
-    layers = [
-        nn.Sequential(
+        # Keep initial layers
+        self.stem = nn.Sequential(
             backbone.conv1,
             backbone.bn1,
             backbone.relu,
             backbone.maxpool
-        ),
-        backbone.layer1,
-        backbone.layer2,
-        backbone.layer3,
-        backbone.layer4,
-    ]
-    return nn.ModuleList(layers)
-
-
-class ResNetSideViTClassifier(nn.Module):
-    """
-    ResNet (blocks 1-4) + Side-ViT classifier.
-    Expects fine-grained tokens from ResNet blocks 2 & 3 as inputs.
-    """
-    def __init__(
-        self,
-        resnet_name: str,
-        pretrained: bool,
-        side_pretrained_path: str,
-        num_classes: int,
-        side_reduction_ratio: int = 2,
-        prompt_reduction_ratio: int = 2,
-        pool_size2: int = 14,
-        pool_size3: int = 7,
-        device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ):
-        super().__init__()
-        self.device = device
-
-        # 1. Backbone CNN
-        assert resnet_name in ['resnet18', 'resnet50', 'resnet101'], "Unsupported ResNet variant"
-        self.resnet = getattr(models, resnet_name)(pretrained=True)
-
-        # Pooling to reduce tokens
-        self.pool2 = nn.AdaptiveAvgPool2d((pool_size2, pool_size2))
-        self.pool3 = nn.AdaptiveAvgPool2d((pool_size3, pool_size3))
-        
-        # 2) Side-ViT configuration & model
-        base_cfg = ViTConfig.from_pretrained(side_pretrained_path)
-        hidden_size = base_cfg.hidden_size
-        side_dim = hidden_size // side_reduction_ratio
-
-        side_cfg = ViTConfig.from_pretrained(
-            side_pretrained_path,
-            num_hidden_layers=base_cfg.num_hidden_layers // 2,
-            hidden_size=side_dim,
-            intermediate_size=side_dim * 4,
-            image_size=base_cfg.image_size,
-            num_labels=num_classes,
-            hidden_dropout_prob=0.0,
-            attention_probs_dropout_prob=0.0
         )
-        self.side_vit = SideViT(side_cfg).to(self.device)
+        self.layer1 = backbone.layer1  # (B, c1, 56, 56)
+        self.layer2 = backbone.layer2  # (B, c2, 28, 28)
+        self.layer3 = backbone.layer3  # (B, c3, 14, 14)
 
-        # 3) Project ResNet block2 & block3 outputs to ViT hidden size
-        # 3. Projection of CNN features to ViT hidden size
-        hidden_size = side_cfg.hidden_size
-        c2 = self.resnet.layer2[-1].conv3.out_channels if hasattr(self.resnet.layer2[-1], 'conv3') else self.resnet.layer2[-1].conv2.out_channels
-        c3 = self.resnet.layer3[-1].conv3.out_channels if hasattr(self.resnet.layer3[-1], 'conv3') else self.resnet.layer3[-1].conv2.out_channels
-        self.proj2 = nn.Linear(c2, hidden_size)
-        self.proj3 = nn.Linear(c3, hidden_size)
+        # Projection: reduce channels to Side-ViT's expected input channels
+        # We'll use 1x1 conv as "FC" per spatial location
+        self.proj_conv = nn.Conv2d(c2 + c3, cfg.dataset.image_channel_num, kernel_size=1)
 
-        # 4. Classification head
+        # Side-ViT module
+        self.sidevit = side_vit
+
+        # Classification head
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, num_classes),
-            nn.Softmax(dim=-1)
+            nn.LayerNorm(vit_embed_dim),
+            nn.Linear(vit_embed_dim, num_classes)
         )
 
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Backbone feature extraction
+        x = self.stem(x)        # (B, 64, 56, 56)
+        x = self.layer1(x)      # (B, c1, 56, 56)
+        f2 = self.layer2(x)     # (B, c2, 28, 28)
+        f3 = self.layer3(f2)    # (B, c3, 14, 14)
 
-    def forward(
-        self,
-        x: torch.Tensor,key_states, value_states) -> torch.Tensor:
-         # Ensure same device
-        print(f"x.shape = {x.shape}")
-        device = x.device
-        if next(self.parameters()).device != device:
-            self.to(device)
+        # Upsample f3 to f2's spatial dims
+        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
 
-        # 1. CNN feature extraction up to layer3
-        feat = self.resnet.conv1(x)
-        feat = self.resnet.bn1(feat)
-        feat = self.resnet.relu(feat)
-        feat = self.resnet.maxpool(feat)
-        feat = self.resnet.layer1(feat)
-        out2 = self.resnet.layer2(feat)
-        out3 = self.resnet.layer3(out2)
+        # Concatenate
+        feats = torch.cat([f2, f3_up], dim=1)  # (B, c2+c3, 28, 28)
 
-        # 2. Reduce token count via pooling
-        out2 = self.pool2(out2)  # [B, C2, pool2, pool2]
-        out3 = self.pool3(out3)  # [B, C3, pool3, pool3]
+        # Project channels
+        feats = self.proj_conv(feats)         # (B, in_ch, 28, 28)
 
-        # Flatten spatial dims -> tokens
-        B, C2, H2, W2 = out2.shape
-        tokens2 = out2.flatten(2).permute(0, 2, 1)
-        B, C3, H3, W3 = out3.shape
-        tokens3 = out3.flatten(2).permute(0, 2, 1)
+        # Upsample to 224x224 for Side-ViT
+        feats = F.interpolate(feats, size=(224, 224), mode='bilinear', align_corners=False)
 
-        # Project to hidden size
-        tokens2 = self.proj2(tokens2)
-        tokens3 = self.proj3(tokens3)
+        # Side-ViT forward
+        vit_out = self.sidevit(feats, K_value, Q_value)         # (B, vit_embed_dim)
 
-        # 3. Prepare embeddings: CLS + tokens + CLS pos encoding
-        tokens = torch.cat([tokens2, tokens3], dim=1)
-        cls_tokens = self.side_vit.vit.embeddings.cls_token.expand(B, -1, -1)
-        embeddings = torch.cat([cls_tokens, tokens], dim=1)
-
-        # Add only CLS positional embedding to avoid mismatches
-        embeddings[:, :1, :] += self.side_vit.vit.embeddings.position_embeddings[:, :1, :]
-        embeddings = self.side_vit.vit.embeddings.dropout(embeddings)
-
-        # 2) (Optional) recompute tokens if not precomputed
-        # f2_tokens = self.proj2(out2).flatten(2).transpose(1,2)
-        # f3_tokens = self.proj3(out3).flatten(2).transpose(1,2)
-
-        # 3) Side-ViT forward with fine-grained states
-        print(f"key_states.shape {key_states.shape}")
-        vit_out = self.side_vit(
-            x, key_states, value_states, interpolate_pos_encoding=True
-        )
-        pooled = vit_out.pooler_output  # (B, hidden_size)
-
-        # 4) Final FC + softmax
-        logits = self.classifier(pooled)
-        return F.softmax(logits, dim=-1)
+        # Classification head
+        logits = self.classifier(vit_out)     # (B, num_classes)
+        probs = F.softmax(logits, dim=-1)
+        return probs

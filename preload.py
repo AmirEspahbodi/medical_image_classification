@@ -8,10 +8,8 @@ from torch.utils.data import DataLoader
 from safetensors.torch import save_file
 from data.dataset import FineImageFolder
 
-
-from src.utils.func import *
+from utils.func import *
 from src.builder import build_frozen_encoder
-from src.frozen_resnet_vit import CombinedResNetViT
 
 
 @hydra.main(config_path="configs", config_name="config")
@@ -23,21 +21,20 @@ def main(cfg):
         return
 
     print('Preloading {} dataset...'.format(cfg.dataset.name))
-    combined_resnet_vit = CombinedResNetViT(cfg, "resnet18", cfg.dataset.num_classes)
-    
+    frozen_encoder = build_frozen_encoder(cfg).to(cfg.base.device)
     dataset = generate_dataset(cfg)
-    preload_dataset(cfg, dataset, combined_resnet_vit)
+    preload_dataset(cfg, dataset, frozen_encoder)
     print('Preloading done.')
 
 
-def preload_dataset(cfg, dataset, combined_resnet_vit):
+def preload_dataset(cfg, dataset, frozen_encoder):
     train_dataset, test_dataset, val_dataset = dataset
     print('Preloading train dataset...')
-    preload(cfg, train_dataset, combined_resnet_vit, cfg.dataset.preload_path)
+    preload(cfg, train_dataset, frozen_encoder, cfg.dataset.preload_path)
     print('Preloading test dataset...')
-    preload(cfg, test_dataset, combined_resnet_vit, cfg.dataset.preload_path)
+    preload(cfg, test_dataset, frozen_encoder, cfg.dataset.preload_path)
     print('Preloading val dataset...')
-    preload(cfg, val_dataset, combined_resnet_vit, cfg.dataset.preload_path)
+    preload(cfg, val_dataset, frozen_encoder, cfg.dataset.preload_path)
 
 
 def generate_dataset(cfg):
@@ -60,7 +57,7 @@ def generate_dataset(cfg):
     return train_dataset, test_dataset, val_dataset
 
 
-def preload(cfg, dataset, combined_resnet_vit, preload_path='./preload_data'):
+def preload(cfg, dataset, frozen_encoder, preload_path='./preload_data'):
     os.makedirs(preload_path, exist_ok=True)
 
     batch_size = cfg.train.batch_size
@@ -91,7 +88,7 @@ def preload(cfg, dataset, combined_resnet_vit, preload_path='./preload_data'):
         img_names = [Path(path).stem for path in img_paths]
         X = X.to(cfg.base.device)
         with torch.no_grad():
-            _, key_states, value_states = combined_resnet_vit(X, interpolate_pos_encoding=True)
+            _, key_states, value_states = frozen_encoder(X, interpolate_pos_encoding=True)
             key_states = key_states.cpu()
             value_states = value_states.cpu()
 
