@@ -46,6 +46,7 @@ def main(cfg):
     frozen_encoder, side_vit_model = generate_model(cfg)
     model = ResNetSideViTClassifier("resnet18", True, cfg.network.pretrained_path, cfg.dataset.num_classes)
 
+    print(f"type cfg = {type(cfg)}")
     resnet_side_vit_model = ResNetSideViTClassifier(
         num_classes=2,
         vit_embed_dim=768//8,
