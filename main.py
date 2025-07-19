@@ -43,13 +43,21 @@ def main(cfg):
         set_seed(cfg.base.random_seed, cfg.base.cudnn_deterministic)
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
-    frozen_encoder, model = generate_model(cfg)
+    frozen_encoder, side_vit_model = generate_model(cfg)
     model = ResNetSideViTClassifier("resnet18", True, cfg.network.pretrained_path, cfg.dataset.num_classes)
+
+    resnet_side_vit_model = ResNetSideViTClassifier(
+        num_classes=2,
+        vit_embed_dim=768//8,
+        resnet_variant='resnet50',
+        pretrained=True,
+        side_vit=side_vit_model
+    )
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
         cfg=cfg,
         frozen_encoder=frozen_encoder,
-        model=model,
+        model=resnet_side_vit_model,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         estimator=estimator
