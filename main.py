@@ -49,9 +49,10 @@ def main(cfg):
     resnet_side_vit_model = ResNetSideViTClassifier(
         num_classes=2,
         vit_embed_dim=768//8,
+        side_vit=side_vit_model,
+        cfg=cfg,
         resnet_variant='resnet50',
         pretrained=True,
-        side_vit=side_vit_model
     )
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
