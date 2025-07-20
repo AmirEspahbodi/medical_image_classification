@@ -134,11 +134,13 @@ class ResNetSideViTClassifier(nn.Module):
         self.encdec1 = nn.Sequential(
             nn.Conv2d(in_ch, hidden_ff, kernel_size=1),
             nn.ReLU(inplace=True),
+            nn.Dropout(mlp_dropout),
             nn.Conv2d(hidden_ff, in_ch, kernel_size=1),
         )
         self.encdec2 = nn.Sequential(
             nn.Conv2d(in_ch, hidden_ff, kernel_size=1),
             nn.ReLU(inplace=True),
+            nn.Dropout(mlp_dropout),
             nn.Conv2d(hidden_ff, in_ch, kernel_size=1),
         )
 
@@ -152,7 +154,6 @@ class ResNetSideViTClassifier(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(mlp_dropout),
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
