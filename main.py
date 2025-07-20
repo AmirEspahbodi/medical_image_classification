@@ -15,7 +15,7 @@ from src.side_resnet_vit import (
     ResNetSideViTClassifier_MLP,
     ResNetSideViTClassifier_FC,
     ResNetSideViTClassifier_FFN_MLP,
-    ResNetSideViTClassifier_FFN_FC,
+    ResNetSideViTClassifier_FFN_FC,ResNetSideViTClassifier_SV
 )
 
 
@@ -62,6 +62,8 @@ def main(cfg):
             ResNetSideViTClassifier = ResNetSideViTClassifier_FC
         case "resnet_sidevit_mlp":
             ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
+        case "resnet_sidevit_sv":
+            ResNetSideViTClassifier = ResNetSideViTClassifier_SV
         case _:
             raise RuntimeError()
         
