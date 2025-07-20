@@ -5,7 +5,7 @@ from torchvision import models
 from .bridge import FineGrainedPromptTuning
 from typing import Any
 
-class ResNetSideViTClassifie_FFN_FC(nn.Module):
+class ResNetSideViTClassifier_FFN_FC(nn.Module):
     def __init__(
         self,
         side_vit1: FineGrainedPromptTuning,
