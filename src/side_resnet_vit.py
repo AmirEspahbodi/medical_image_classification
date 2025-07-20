@@ -126,7 +126,7 @@ class ResNetSideViTClassifier(nn.Module):
 
         # Projection from block1+2 to Side-ViT inputs
         in_ch = cfg.dataset.image_channel_num
-        self.proj_sv1 = nn.Conv2d(c1 + c2, in_ch, kernel_size=1)
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
         self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
 
         # Encoder-Decoder feed-forward modules for robust feature blending
@@ -167,8 +167,8 @@ class ResNetSideViTClassifier(nn.Module):
             f4 = self.layer4(f3)        # block4 (unused here)
 
         # ----- Build features for Side-ViT-1 -----
-        f2_up = F.interpolate(f2, size=f1.shape[-2:], mode='bilinear', align_corners=False)
-        feats12 = torch.cat([f1, f2_up], dim=1)            # [c1+c2, H/4, W/4]
+        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
+        feats12 = torch.cat([f2, f3_up], dim=1)            # [c1+c2, H/4, W/4]
         feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
         feats1 = self.encdec1(feats1)                      # robust blending
         feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
