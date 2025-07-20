@@ -422,8 +422,8 @@ class ResNetSideViTClassifier_SV(nn.Module):
 
         # Projection from block1+2 to Side-ViT inputs
         in_ch = cfg.dataset.image_channel_num
-        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
-        self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
+        self.proj_sv1 = nn.Conv2d(c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
 
         # Side-ViT classifiers
         self.sidevit1 = side_vit1
@@ -438,16 +438,12 @@ class ResNetSideViTClassifier_SV(nn.Module):
             f3 = self.layer3(f2)        # block3 (unused here)
             f4 = self.layer4(f3)        # block4 (unused here)
 
-        # ----- Build features for Side-ViT-1 -----
-        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-        feats12 = torch.cat([f2, f3_up], dim=1)            # [c1+c2, H/4, W/4]
-        feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
+        # ----- Build features for Side-ViT-1 ----- 
+        feats1 = self.proj_sv1(f3)                    # [in_ch, H/4, W/4]
         feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Build features for Side-ViT-2 -----
-        f4_up = F.interpolate(f4, size=f3.shape[-2:], mode='bilinear', align_corners=False)
-        feats34 = torch.cat([f3, f4_up], dim=1)
-        feats2 = self.proj_sv2(feats34)                    # [in_ch, H/4, W/4]
+        feats2 = self.proj_sv2(f4)                    # [in_ch, H/4, W/4]
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Side-ViT predictions -----
