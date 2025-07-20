@@ -133,7 +133,7 @@ class ResNetSideViTClassifier(nn.Module):
         self.sidevit2 = side_vit2
 
         # MLP classifier: concatenate two 2-dim outputs -> 4-dim input
-        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 16)
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
         self.mlp = nn.Sequential(
             nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
