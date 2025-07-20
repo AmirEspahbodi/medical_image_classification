@@ -422,7 +422,7 @@ class ResNetSideViTClassifier_SV(nn.Module):
 
         # Projection from block1+2 to Side-ViT inputs
         in_ch = cfg.dataset.image_channel_num
-        self.proj_sv1 = nn.Conv2d(c3, in_ch, kernel_size=1)
+        self.proj_sv1 = nn.Conv2d(c2+c3, in_ch, kernel_size=1)
         self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
 
         # Side-ViT classifiers
@@ -443,7 +443,9 @@ class ResNetSideViTClassifier_SV(nn.Module):
         feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Build features for Side-ViT-2 -----
-        feats2 = self.proj_sv2(f4)                    # [in_ch, H/4, W/4]
+        f4_up = F.interpolate(f4, size=f3.shape[-2:], mode='bilinear', align_corners=False)
+        feats34 = torch.cat([f3, f4_up], dim=1)
+        feats2 = self.proj_sv2(feats34)                 # [in_ch, H/4, W/4]
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Side-ViT predictions -----
