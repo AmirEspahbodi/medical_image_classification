@@ -144,9 +144,9 @@ class ResNetSideViTClassifier(nn.Module):
             feats1 = torch.cat([f2, f3_up], dim=1)
 
         feats1 = self.proj_conv1(feats1)
-        feats1 = F.interpolate(feats1, size=(224, 224), mode='bilinear', align_corners=False)
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
         feats2 = self.proj_conv2(f4)
-        feats2 = F.interpolate(feats2, size=(224, 224), mode='bilinear', align_corners=False)
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
