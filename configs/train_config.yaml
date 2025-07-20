@@ -2,7 +2,7 @@ train:
   epochs: 15
   batch_size: 16
   num_workers: 4
-  criterion: binary_cross_entropy # available criterions are list in 'criterion_args' below
+  criterion: cross_entropy # available criterions are list in 'criterion_args' below
   loss_weight: dynamic # null / balance / dynamic / list with shape num_classes. Weights for loss function. Don't use it with weighted sampling!
   loss_weight_decay_rate: 0.0001 # if loss_weights is dynamic, loss weight will decay from balance to equivalent weights
   warmup_epochs: 0 # set to 0 to disable warmup
