@@ -85,7 +85,7 @@ from torchvision import models
 from .bridge import FineGrainedPromptTuning
 from typing import Any
 
-class ResNetSideViTClassifier(nn.Module):
+class ResNetSideViTClassifier_new(nn.Module):
     def __init__(
         self,
         num_classes: int,
