@@ -130,6 +130,9 @@ class ResNetSideViTClassifier(nn.Module):
         self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
 
         # Encoder-Decoder feed-forward modules for robust feature blending
+        
+        mlp_dropout = getattr(cfg, 'mlp_dropout', 0.3)
+        
         hidden_ff = in_ch * 2
         self.encdec1 = nn.Sequential(
             nn.Conv2d(in_ch, hidden_ff, kernel_size=1),
@@ -150,7 +153,6 @@ class ResNetSideViTClassifier(nn.Module):
 
         # MLP head with dropout for regularization
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
-        mlp_dropout = getattr(cfg, 'mlp_dropout', 0.3)
         self.mlp = nn.Sequential(
             nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
