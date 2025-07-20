@@ -707,6 +707,7 @@ class ResNetSideViTClassifier_SV_3RDVIT(nn.Module):
         self,
         side_vit1: FineGrainedPromptTuning,
         side_vit2: FineGrainedPromptTuning,
+        side_vit3: FineGrainedPromptTuning,
         cfg: Any,
         resnet_variant: str = 'resnet18',
         pretrained: bool = True,
@@ -729,16 +730,8 @@ class ResNetSideViTClassifier_SV_3RDVIT(nn.Module):
         for param in backbone.parameters():
             param.requires_grad = False
 
-        image_size = cfg.image_size if isinstance(cfg.image_size, (tuple, list)) else (cfg.image_size, cfg.image_size)
-        patch_size = cfg.patch_size if isinstance(cfg.patch_size, (tuple, list)) else (cfg.patch_size, cfg.patch_size)
-        num_channels = cfg.num_channels
-        hidden_size = cfg.hidden_size
-
-        num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
-        self.image_size = image_size
-        self.patch_size = patch_size
-        self.num_channels = num_channels
-        self.num_patches = num_patches
+        hidden_size = 96
+        self.num_channels = cfg.dataset.image_channel_num
         dropout_rate=0.15
         
         self.cnn = nn.Sequential(
@@ -783,6 +776,7 @@ class ResNetSideViTClassifier_SV_3RDVIT(nn.Module):
         # Side-ViT classifiers
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
+        self.sidevit3 = side_vit3
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
         # Extract hierarchical features (backbone frozen)
@@ -806,14 +800,16 @@ class ResNetSideViTClassifier_SV_3RDVIT(nn.Module):
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- # rd side vit cnn -----
-        embeddings = self.cnn(pixel_values).flatten(2).transpose(1, 2)
+        embeddings = self.cnn(x).flatten(2).transpose(1, 2)
         
         # ----- Side-ViT predictions -----
         probs1 = self.sidevit1(feats1, K_value, Q_value)
         probs2 = self.sidevit2(feats2, K_value, Q_value)
+        probs3 = self.sidevit3(embeddings, K_value, Q_value)
+        
 
         # soft-voting
-        probs = (probs1 + probs2) / 2
+        probs = (probs1 + probs2 + probs3) / 3
         return probs
         
 
