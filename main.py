@@ -47,7 +47,7 @@ def main(cfg):
     _, side_vit_model2 = generate_model(cfg)
 
     print(f"type cfg = {type(cfg)}")
-    match cfg.dataset.save_path:
+    match cfg.network.model:
         case resnet_sidevit_ffn_fc:
             ResNetSideViTClassifier = ResNetSideViTClassifie_FFN_FC ‎
         case resnet_sidevit_ffn_mlp:
@@ -56,6 +56,8 @@ def main(cfg):
             ResNetSideViTClassifier = ResNetSideViTClassifie_FC
         case resnet_sidevit_mlp:
             ResNetSideViTClassifier = ResNetSideViTClassifier_MLP‎
+        case _:
+            raise RuntimeError()
         
     resnet_side_vit_model = ResNetSideViTClassifier(
         side_vit1=side_vit_model1,
