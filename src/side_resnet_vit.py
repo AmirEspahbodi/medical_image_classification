@@ -68,17 +68,16 @@ class ResNetSideViTClassifier(nn.Module):
         # Project channels -> (B,in_ch,H/8,W/8)
         feats = self.proj_conv(feats)
 
-        # Upsample to 224×224
-        feats = F.interpolate(feats, size=(224,224), mode='bilinear', align_corners=False)
+        feats = F.interpolate(feats, size=(128,128), mode='bilinear', align_corners=False)
 
         # Side-ViT returns either (B,embed_dim) or (B,N,embed_dim)
         vit_out = self.sidevit(feats, K_value, Q_value)
 
         # If sequence output, pick class token or global average
-        if vit_out.ndim == 3:
-            # assume first token is [CLS]
-            vit_out = vit_out[:, 0, :]
+        # if vit_out.ndim == 3:
+        #     # assume first token is [CLS]
+        #     vit_out = vit_out[:, 0, :]
 
-        # Classifier
-        logits = self.classifier(vit_out)  # (B,num_classes)
-        return F.softmax(logits, dim=-1)
+        # # Classifier
+        # logits = self.classifier(vit_out)  # (B,num_classes)
+        return vit_out
