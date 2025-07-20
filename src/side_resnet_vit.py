@@ -98,16 +98,17 @@ class ResNetSideViTClassifier(nn.Module):
         # Load ResNet backbone
         if resnet_variant == 'resnet18':
             backbone = models.resnet18(pretrained=pretrained)
-            c2, c3, c4 = 128, 256, 512
+            c1, c2, c3, c4 = 64, 128, 256, 512
         elif resnet_variant == 'resnet50':
             backbone = models.resnet50(pretrained=pretrained)
-            c2, c3, c4 = 512, 1024, 2048
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
         elif resnet_variant == 'resnet101':
             backbone = models.resnet101(pretrained=pretrained)
-            c2, c3, c4 = 512, 1024, 2048
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
         else:
             raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
 
+        # Freeze backbone
         for param in backbone.parameters():
             param.requires_grad = False
             
@@ -118,51 +119,71 @@ class ResNetSideViTClassifier(nn.Module):
             backbone.relu,
             backbone.maxpool
         )
-        self.layer1 = backbone.layer1
-        self.layer2 = backbone.layer2
-        self.layer3 = backbone.layer3
-        self.layer4 = backbone.layer4
+        self.layer1 = backbone.layer1  # output channels c1
+        self.layer2 = backbone.layer2  # output channels c2
+        self.layer3 = backbone.layer3  # output channels c3
+        self.layer4 = backbone.layer4  # output channels c4
 
-        # 1x1 conv to reduce channels to Side-ViT in_chans
+        # Projection from block1+2 to Side-ViT inputs
         in_ch = cfg.dataset.image_channel_num
-        self.proj_conv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
-        self.proj_conv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
+        self.proj_sv1 = nn.Conv2d(c1 + c2, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c1 + c2, in_ch, kernel_size=1)
 
-        # Side-ViT
+        # Encoder-Decoder feed-forward modules for robust feature blending
+        hidden_ff = in_ch * 2
+        self.encdec1 = nn.Sequential(
+            nn.Conv2d(in_ch, hidden_ff, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_ff, in_ch, kernel_size=1),
+        )
+        self.encdec2 = nn.Sequential(
+            nn.Conv2d(in_ch, hidden_ff, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_ff, in_ch, kernel_size=1),
+        )
+
+        # Side-ViT classifiers
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
 
-        # MLP classifier: concatenate two 2-dim outputs -> 4-dim input
+        # MLP head with dropout for regularization
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
+        mlp_dropout = getattr(cfg, 'mlp_dropout', 0.3)
         self.mlp = nn.Sequential(
             nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, 2)
+            nn.Dropout(mlp_dropout),
+            nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Extract hierarchical features (backbone frozen)
         with torch.no_grad():
-            x = self.stem(x)
-            x = self.layer1(x)
-            f2 = self.layer2(x)
-            f3 = self.layer3(f2)
-            f4 = self.layer4(f3)
-            f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-            feats1 = torch.cat([f2, f3_up], dim=1)
+            x0 = self.stem(x)
+            f1 = self.layer1(x0)        # block1
+            f2 = self.layer2(f1)        # block2
+            f3 = self.layer3(f2)        # block3 (unused here)
+            f4 = self.layer4(f3)        # block4 (unused here)
 
-        feats1 = self.proj_conv1(feats1)
+        # ----- Build features for Side-ViT-1 -----
+        # Align spatial dims: upsample f2 to f1's size
+        f2_up = F.interpolate(f2, size=f1.shape[-2:], mode='bilinear', align_corners=False)
+        feats12 = torch.cat([f1, f2_up], dim=1)            # [c1+c2, H/4, W/4]
+        feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
+        feats1 = self.encdec1(feats1)                      # robust blending
         feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
-        feats2 = self.proj_conv2(f4)
+
+        # ----- Build features for Side-ViT-2 -----
+        # reuse block1+2 features but separate proj/encdec
+        feats2 = self.proj_sv2(feats12)                    # [in_ch, H/4, W/4]
+        feats2 = self.encdec2(feats2)                      # robust blending
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
+        # ----- Side-ViT predictions -----
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
 
-        # probs = (vit_out1 + vit_out2) / 2
-
-                # Concatenate and classify via MLP
-        combined = torch.cat([vit_out1, vit_out2], dim=1) 
-        logits = self.mlp(combined) 
-        
+        # Combine and classify
+        combined = torch.cat([vit_out1, vit_out2], dim=1)  # [batch, 4]
+        logits = self.mlp(combined)
         return logits
