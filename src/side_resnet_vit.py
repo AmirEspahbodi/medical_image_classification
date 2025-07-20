@@ -108,7 +108,7 @@ class ResNetSideViTClassifie_FFN_FC(nn.Module):
         return logits
 
 
-class ResNetSideViTClassifier_MLP(nn.Module):
+class ResNetSideViTClassifier_FFN_MLP(nn.Module):
     def __init__(
         self,
         side_vit1: FineGrainedPromptTuning,
@@ -296,7 +296,7 @@ class ResNetSideViTClassifie_FC(nn.Module):
         return logits
 
 
-class ResNetSideViTClassifier_FFN_MLP(nn.Module):
+class ResNetSideViTClassifier_MLP(nn.Module):
     def __init__(
         self,
         side_vit1: FineGrainedPromptTuning,
