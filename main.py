@@ -10,7 +10,7 @@ from train import train, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.side_resnet_vit import ResNetSideViTClassifier
+from src.side_resnet_vit import ResNetSideViTClassifier_FFN_FC, ResNetSideViTClassifier_FFN_MLP, ResNetSideViTClassifier_FC, ResNetSideViTClassifier_MLP
 
 
 @hydra.main(config_path="configs", config_name="config")
