@@ -456,5 +456,5 @@ class ResNetSideViTClassifier_SV(nn.Module):
 
         # soft-voting
         probs = (probs1 + probs2) / 2
-        return logits
+        return probs
         
