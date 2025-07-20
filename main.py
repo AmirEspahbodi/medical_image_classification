@@ -61,4 +61,45 @@ def main(cfg):
         case "resnet_sidevit_fc":
             ResNetSideViTClassifier = ResNetSideViTClassifier_FC
         case "resnet_sidevit_mlp":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_ML_
+            ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
+        case _:
+            raise RuntimeError()
+        
+    resnet_side_vit_model = ResNetSideViTClassifier(
+        side_vit1=side_vit_model1,
+        side_vit2=side_vit_model2,
+        cfg=cfg,
+        resnet_variant='resnet50',
+        pretrained=True,
+    ).to(cfg.base.device)
+    estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
+    train(
+        cfg=cfg,
+        frozen_encoder=frozen_encoder,
+        model=resnet_side_vit_model,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        estimator=estimator
+    )
+
+    print('This is the performance of the final model:')
+    checkpoint = os.path.join(cfg.dataset.save_path, 'final_weights.pt')
+    load_weights(resnet_side_vit_model, checkpoint)
+    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
+
+    print('This is the performance of the best validation model:')
+    checkpoint = os.path.join(cfg.dataset.save_path, 'best_validation_weights.pt')
+    load_weights(resnet_side_vit_model, checkpoint)
+    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
+
+
+def set_seed(seed, deterministic=False):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = deterministic
+
+
+if __name__ == '__main__':
+    main()
