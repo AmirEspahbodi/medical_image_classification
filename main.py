@@ -1,5 +1,6 @@
 import os
 import random
+import torch
 
 import hydra
 import numpy as np
@@ -10,13 +11,12 @@ from train import train, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.side_resnet_bit import (
+from src.side_resnet_vit import (
     ResNetSideViTClassifier_MLP,
-    ResNetSideViTClassifie_FC,
-    ‎ResNetSideViTClassifier_FFN_MLP,
-    ‎ResNetSideViTClassifie_FFN_FC
+    ResNetSideViTClassifier_FC,
+    ResNetSideViTClassifier_FFN_MLP,
+    ResNetSideViTClassifier_FFN_FC,
 )
-
 
 
 @hydra.main(config_path="configs", config_name="config")
@@ -29,11 +29,11 @@ def main(cfg):
     save_path = cfg.dataset.save_path
     if os.path.exists(save_path):
         if cfg.base.overwrite:
-            print_msg('Save path {} exists and will be overwrited.'.format(save_path), warning=True)
+            print_msg(f'Save path {save_path} exists and will be overwritten.', warning=True)
         else:
             new_save_path = add_path_suffix(save_path)
             cfg.dataset.save_path = new_save_path
-            warning = 'Save path {} exists. New save path is set to be {}.'.format(save_path, new_save_path)
+            warning = f'Save path {save_path} exists. New save path is set to {new_save_path}.'
             print_msg(warning, warning=True)
 
     os.makedirs(cfg.dataset.save_path, exist_ok=True)
@@ -43,7 +43,7 @@ def main(cfg):
     if cfg.dataset.preload_path:
         print(f"cfg.dataset.preload_path = {cfg.dataset.preload_path}")
         assert os.path.exists(cfg.dataset.preload_path), 'Preload path does not exist.'
-        print_msg('Preloading is enabled using {}'.format(cfg.dataset.preload_path))
+        print_msg(f'Preloading is enabled using {cfg.dataset.preload_path}')
 
     if cfg.base.random_seed >= 0:
         set_seed(cfg.base.random_seed, cfg.base.cudnn_deterministic)
@@ -54,52 +54,11 @@ def main(cfg):
 
     print(f"type cfg = {type(cfg)}")
     match cfg.network.model:
-        case resnet_sidevit_ffn_fc:
-            ResNetSideViTClassifier = ResNetSideViTClassifie_FFN_FC ‎
-        case resnet_sidevit_ffn_mlp:
-            ResNetSideViTClassifier = ‎‎ResNetSideViTClassifier_FFN_MLP‎ 
-        case resnet_sidevit_fc:
-            ResNetSideViTClassifier = ResNetSideViTClassifie_FC
-        case resnet_sidevit_mlp:
-            ResNetSideViTClassifier = ResNetSideViTClassifier_MLP‎
-        case _:
-            raise RuntimeError()
-        
-    resnet_side_vit_model = ResNetSideViTClassifier(
-        side_vit1=side_vit_model1,
-        side_vit2=side_vit_model2,
-        cfg=cfg,
-        resnet_variant='resnet50',
-        pretrained=True,
-    ).to(cfg.base.device)
-    estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
-    train(
-        cfg=cfg,
-        frozen_encoder=frozen_encoder,
-        model=resnet_side_vit_model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        estimator=estimator
-    )
-
-    print('This is the performance of the final model:')
-    checkpoint = os.path.join(cfg.dataset.save_path, 'final_weights.pt')
-    load_weights(resnet_side_vit_model, checkpoint)
-    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
-
-    print('This is the performance of the best validation model:')
-    checkpoint = os.path.join(cfg.dataset.save_path, 'best_validation_weights.pt')
-    load_weights(resnet_side_vit_model, checkpoint)
-    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
-
-
-def set_seed(seed, deterministic=False):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = deterministic
-
-
-if __name__ == '__main__':
-    main()
+        case "resnet_sidevit_ffn_fc":
+            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_FC
+        case "resnet_sidevit_ffn_mlp":
+            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_MLP
+        case "resnet_sidevit_fc":
+            ResNetSideViTClassifier = ResNetSideViTClassifier_FC
+        case "resnet_sidevit_mlp":
+            ResNetSideViTClassifier = ResNetSideViTClassifier_ML_
