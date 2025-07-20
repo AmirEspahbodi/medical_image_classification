@@ -151,5 +151,5 @@ class ResNetSideViTClassifier(nn.Module):
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
 
-        # probs = (vit_out1 + vit_out2) / 2
-        return vit_out1
+        probs = (vit_out1 + vit_out2) / 2
+        return probs
