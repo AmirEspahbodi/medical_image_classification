@@ -126,7 +126,7 @@ class ResNetSideViTClassifier(nn.Module):
         # 1x1 conv to reduce channels to Side-ViT in_chans
         in_ch = cfg.dataset.image_channel_num
         self.proj_conv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
-        self.proj_conv2 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.proj_conv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
 
         # Side-ViT
         self.sidevit1 = side_vit1
@@ -149,7 +149,7 @@ class ResNetSideViTClassifier(nn.Module):
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
-        # vit_out2 = self.sidevit2(feats2, K_value, Q_value)
+        vit_out2 = self.sidevit2(feats2, K_value, Q_value)
 
         # probs = (vit_out1 + vit_out2) / 2
         return vit_out1
