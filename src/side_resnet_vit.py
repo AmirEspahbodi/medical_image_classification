@@ -153,11 +153,7 @@ class ResNetSideViTClassifier(nn.Module):
 
         # MLP head with dropout for regularization
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
-        self.mlp = nn.Sequential(
-            nn.Linear(4, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, cfg.dataset.num_classes)
-        )
+        self.fc = nn.Linear(4, cfg.dataset.num_classes)
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
         # Extract hierarchical features (backbone frozen)
@@ -188,5 +184,5 @@ class ResNetSideViTClassifier(nn.Module):
 
         # Combine and classify
         combined = torch.cat([vit_out1, vit_out2], dim=1)  # [batch, 4]
-        logits = self.mlp(combined)
+        logits = self.fc(combined)
         return logits
