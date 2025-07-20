@@ -43,12 +43,13 @@ def main(cfg):
         set_seed(cfg.base.random_seed, cfg.base.cudnn_deterministic)
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
-    frozen_encoder, side_vit_model = generate_model(cfg)
-    # _, side_vit_model2 = generate_model(cfg)
+    frozen_encoder, side_vit_model1 = generate_model(cfg)
+    _, side_vit_model2 = generate_model(cfg)
 
     print(f"type cfg = {type(cfg)}")
     resnet_side_vit_model = ResNetSideViTClassifier(
-        side_vit=side_vit_model,
+        side_vit1=side_vit_model1,
+        side_vit2=side_vit_model2,
         cfg=cfg,
         resnet_variant='resnet50',
         pretrained=True,

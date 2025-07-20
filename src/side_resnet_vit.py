@@ -12,7 +12,7 @@ from torchvision import models
 from .bridge import FineGrainedPromptTuning
 from typing import Any
 
-class ResNetSideViTClassifier(nn.Module):
+class ResNetSideViTClassifier_old(nn.Module):
     def __init__(
         self,
         side_vit: FineGrainedPromptTuning,
@@ -85,11 +85,9 @@ from torchvision import models
 from .bridge import FineGrainedPromptTuning
 from typing import Any
 
-class ResNetSideViTClassifier_new(nn.Module):
+class ResNetSideViTClassifier(nn.Module):
     def __init__(
         self,
-        num_classes: int,
-        vit_embed_dim: int,
         side_vit1: FineGrainedPromptTuning,
         side_vit2: FineGrainedPromptTuning,
         cfg: Any,
@@ -110,6 +108,9 @@ class ResNetSideViTClassifier_new(nn.Module):
         else:
             raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
 
+        for param in backbone.parameters():
+            param.requires_grad = False
+            
         # Initial layers
         self.stem = nn.Sequential(
             backbone.conv1,
@@ -131,30 +132,23 @@ class ResNetSideViTClassifier_new(nn.Module):
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
 
-        # Classification head
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(vit_embed_dim),
-            nn.Linear(vit_embed_dim, num_classes)
-        )
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
-        # x: (B, 3, H, W)
-        # Extract ResNet features
-        x = self.stem(x)
-        x = self.layer1(x)
-        f2 = self.layer2(x)
-        f3 = self.layer3(f2)
-        f4 = self.layer4(f3)
+        with torch.no_grad():
+            x = self.stem(x)
+            x = self.layer1(x)
+            f2 = self.layer2(x)
+            f3 = self.layer3(f2)
+            f4 = self.layer4(f3)
+            f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
+            feats1 = torch.cat([f2, f3_up], dim=1)
 
-        # Align spatial dims
-        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-        feats1 = torch.cat([f2, f3_up], dim=1)
         feats1 = self.proj_conv1(feats1)
         feats1 = F.interpolate(feats1, size=(224, 224), mode='bilinear', align_corners=False)
-        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
-
         feats2 = self.proj_conv2(f4)
         feats2 = F.interpolate(feats2, size=(224, 224), mode='bilinear', align_corners=False)
+
+        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
 
         probs = (vit_out1 + vit_out2) / 2
