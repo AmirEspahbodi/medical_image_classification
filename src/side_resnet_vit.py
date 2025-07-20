@@ -457,4 +457,364 @@ class ResNetSideViTClassifier_SV(nn.Module):
         # soft-voting
         probs = (probs1 + probs2) / 2
         return probs
+
+# - - - - - - - - - - - - -
+
+class ResNetSideViTClassifier_FC_3RDVIT(nn.Module):
+    def __init__(
+        self,
+        side_vit1: FineGrainedPromptTuning,
+        side_vit2: FineGrainedPromptTuning,
+        cfg: Any,
+        resnet_variant: str = 'resnet18',
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Load ResNet backbone
+        if resnet_variant == 'resnet18':
+            backbone = models.resnet18(pretrained=pretrained)
+            c1, c2, c3, c4 = 64, 128, 256, 512
+        elif resnet_variant == 'resnet50':
+            backbone = models.resnet50(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        elif resnet_variant == 'resnet101':
+            backbone = models.resnet101(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        else:
+            raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
+
+        # Freeze backbone
+        for param in backbone.parameters():
+            param.requires_grad = False
+
+        image_size = cfg.image_size if isinstance(cfg.image_size, (tuple, list)) else (cfg.image_size, cfg.image_size)
+        patch_size = cfg.patch_size if isinstance(cfg.patch_size, (tuple, list)) else (cfg.patch_size, cfg.patch_size)
+        num_channels = cfg.num_channels
+        hidden_size = cfg.hidden_size
+
+        num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
+        self.image_size = image_size
+        self.patch_size = patch_size
+        self.num_channels = num_channels
+        self.num_patches = num_patches
+        dropout_rate=0.15
         
+        self.cnn = nn.Sequential(
+            # Layer 1: Larger kernel for better feature extraction
+            nn.Conv2d(num_channels, 64, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(64),
+            nn.GELU(),  # Better activation than ReLU
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 2: Standard 3x3 conv
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.GELU(),
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 3: 1x1 conv for channel reduction before final conv
+            nn.Conv2d(128, 64, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
+            
+            # Final layer
+            nn.Conv2d(64, hidden_size, kernel_size=patch_size, stride=patch_size),
+        )
+
+        # Initial layers
+        self.stem = nn.Sequential(
+            backbone.conv1,
+            backbone.bn1,
+            backbone.relu,
+            backbone.maxpool
+        )
+        self.layer1 = backbone.layer1  # output channels c1
+        self.layer2 = backbone.layer2  # output channels c2
+        self.layer3 = backbone.layer3  # output channels c3
+        self.layer4 = backbone.layer4  # output channels c4
+
+        # Projection from block1+2 to Side-ViT inputs
+        in_ch = cfg.dataset.image_channel_num
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
+
+        # Side-ViT classifiers
+        self.sidevit1 = side_vit1
+        self.sidevit2 = side_vit2
+
+        # MLP head with dropout for regularization
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
+        self.fc = nn.Linear(4, cfg.dataset.num_classes)
+
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Extract hierarchical features (backbone frozen)
+        with torch.no_grad():
+            x0 = self.stem(x)
+            f1 = self.layer1(x0)        # block1
+            f2 = self.layer2(f1)        # block2
+            f3 = self.layer3(f2)        # block3 (unused here)
+            f4 = self.layer4(f3)        # block4 (unused here)
+
+        # ----- Build features for Side-ViT-1 -----
+        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
+        feats12 = torch.cat([f2, f3_up], dim=1)            # [c1+c2, H/4, W/4]
+        feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- Build features for Side-ViT-2 -----
+        f4_up = F.interpolate(f4, size=f3.shape[-2:], mode='bilinear', align_corners=False)
+        feats34 = torch.cat([f3, f4_up], dim=1)
+        feats2 = self.proj_sv2(feats34)                    # [in_ch, H/4, W/4]
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- # rd side vit cnn -----
+        embeddings = self.cnn(pixel_values).flatten(2).transpose(1, 2)
+        
+        # ----- Side-ViT predictions -----
+        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
+        vit_out2 = self.sidevit2(feats2, K_value, Q_value)
+
+        # Combine and classify
+        combined = torch.cat([vit_out1, vit_out2], dim=1)  # [batch, 4]
+        logits = self.fc(combined)
+        return logits
+
+
+class ResNetSideViTClassifier_MLP_3RDVIT(nn.Module):
+    def __init__(
+        self,
+        side_vit1: FineGrainedPromptTuning,
+        side_vit2: FineGrainedPromptTuning,
+        cfg: Any,
+        resnet_variant: str = 'resnet18',
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Load ResNet backbone
+        if resnet_variant == 'resnet18':
+            backbone = models.resnet18(pretrained=pretrained)
+            c1, c2, c3, c4 = 64, 128, 256, 512
+        elif resnet_variant == 'resnet50':
+            backbone = models.resnet50(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        elif resnet_variant == 'resnet101':
+            backbone = models.resnet101(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        else:
+            raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
+
+        # Freeze backbone
+        for param in backbone.parameters():
+            param.requires_grad = False
+
+        image_size = cfg.image_size if isinstance(cfg.image_size, (tuple, list)) else (cfg.image_size, cfg.image_size)
+        patch_size = cfg.patch_size if isinstance(cfg.patch_size, (tuple, list)) else (cfg.patch_size, cfg.patch_size)
+        num_channels = cfg.num_channels
+        hidden_size = cfg.hidden_size
+
+        num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
+        self.image_size = image_size
+        self.patch_size = patch_size
+        self.num_channels = num_channels
+        self.num_patches = num_patches
+        dropout_rate=0.15
+        
+        self.cnn = nn.Sequential(
+            # Layer 1: Larger kernel for better feature extraction
+            nn.Conv2d(num_channels, 64, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(64),
+            nn.GELU(),  # Better activation than ReLU
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 2: Standard 3x3 conv
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.GELU(),
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 3: 1x1 conv for channel reduction before final conv
+            nn.Conv2d(128, 64, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
+            
+            # Final layer
+            nn.Conv2d(64, hidden_size, kernel_size=patch_size, stride=patch_size),
+        )
+        
+        # Initial layers
+        self.stem = nn.Sequential(
+            backbone.conv1,
+            backbone.bn1,
+            backbone.relu,
+            backbone.maxpool
+        )
+        self.layer1 = backbone.layer1  # output channels c1
+        self.layer2 = backbone.layer2  # output channels c2
+        self.layer3 = backbone.layer3  # output channels c3
+        self.layer4 = backbone.layer4  # output channels c4
+
+        # Projection from block1+2 to Side-ViT inputs
+        in_ch = cfg.dataset.image_channel_num
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
+
+        # Side-ViT classifiers
+        self.sidevit1 = side_vit1
+        self.sidevit2 = side_vit2
+
+        # MLP head with dropout for regularization
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
+        self.mlp = nn.Sequential(
+            nn.Linear(4, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, cfg.dataset.num_classes)
+        )
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Extract hierarchical features (backbone frozen)
+        with torch.no_grad():
+            x0 = self.stem(x)
+            f1 = self.layer1(x0)        # block1
+            f2 = self.layer2(f1)        # block2
+            f3 = self.layer3(f2)        # block3 (unused here)
+            f4 = self.layer4(f3)        # block4 (unused here)
+
+        # ----- Build features for Side-ViT-1 -----
+        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
+        feats12 = torch.cat([f2, f3_up], dim=1)            # [c1+c2, H/4, W/4]
+        feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- Build features for Side-ViT-2 -----
+        f4_up = F.interpolate(f4, size=f3.shape[-2:], mode='bilinear', align_corners=False)
+        feats34 = torch.cat([f3, f4_up], dim=1)
+        feats2 = self.proj_sv2(feats34)                    # [in_ch, H/4, W/4]
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- # rd side vit cnn -----
+        embeddings = self.cnn(pixel_values).flatten(2).transpose(1, 2)
+        
+        # ----- Side-ViT predictions -----
+        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
+        vit_out2 = self.sidevit2(feats2, K_value, Q_value)
+        
+        # Combine and classify
+        combined = torch.cat([vit_out1, vit_out2], dim=1)  # [batch, 4]
+        logits = self.mlp(combined)
+        return logits
+
+class ResNetSideViTClassifier_SV_3RDVIT(nn.Module):
+    def __init__(
+        self,
+        side_vit1: FineGrainedPromptTuning,
+        side_vit2: FineGrainedPromptTuning,
+        cfg: Any,
+        resnet_variant: str = 'resnet18',
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Load ResNet backbone
+        if resnet_variant == 'resnet18':
+            backbone = models.resnet18(pretrained=pretrained)
+            c1, c2, c3, c4 = 64, 128, 256, 512
+        elif resnet_variant == 'resnet50':
+            backbone = models.resnet50(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        elif resnet_variant == 'resnet101':
+            backbone = models.resnet101(pretrained=pretrained)
+            c1, c2, c3, c4 = 256, 512, 1024, 2048
+        else:
+            raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
+
+        # Freeze backbone
+        for param in backbone.parameters():
+            param.requires_grad = False
+
+        image_size = cfg.image_size if isinstance(cfg.image_size, (tuple, list)) else (cfg.image_size, cfg.image_size)
+        patch_size = cfg.patch_size if isinstance(cfg.patch_size, (tuple, list)) else (cfg.patch_size, cfg.patch_size)
+        num_channels = cfg.num_channels
+        hidden_size = cfg.hidden_size
+
+        num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
+        self.image_size = image_size
+        self.patch_size = patch_size
+        self.num_channels = num_channels
+        self.num_patches = num_patches
+        dropout_rate=0.15
+        
+        self.cnn = nn.Sequential(
+            # Layer 1: Larger kernel for better feature extraction
+            nn.Conv2d(num_channels, 64, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(64),
+            nn.GELU(),  # Better activation than ReLU
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 2: Standard 3x3 conv
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.GELU(),
+            nn.Dropout2d(dropout_rate),
+            
+            # Layer 3: 1x1 conv for channel reduction before final conv
+            nn.Conv2d(128, 64, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
+            
+            # Final layer
+            nn.Conv2d(64, hidden_size, kernel_size=patch_size, stride=patch_size),
+        )
+        
+        # Initial layers
+        self.stem = nn.Sequential(
+            backbone.conv1,
+            backbone.bn1,
+            backbone.relu,
+            backbone.maxpool
+        )
+        self.layer1 = backbone.layer1  # output channels c1
+        self.layer2 = backbone.layer2  # output channels c2
+        self.layer3 = backbone.layer3  # output channels c3
+        self.layer4 = backbone.layer4  # output channels c4
+
+        # Projection from block1+2 to Side-ViT inputs
+        in_ch = cfg.dataset.image_channel_num
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c3 + c4, in_ch, kernel_size=1)
+
+        # Side-ViT classifiers
+        self.sidevit1 = side_vit1
+        self.sidevit2 = side_vit2
+
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Extract hierarchical features (backbone frozen)
+        with torch.no_grad():
+            x0 = self.stem(x)
+            f1 = self.layer1(x0)        # block1
+            f2 = self.layer2(f1)        # block2
+            f3 = self.layer3(f2)        # block3 (unused here)
+            f4 = self.layer4(f3)        # block4 (unused here)
+
+        # ----- Build features for Side-ViT-1 -----
+        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
+        feats12 = torch.cat([f2, f3_up], dim=1)            # [c1+c2, H/4, W/4]
+        feats1 = self.proj_sv1(feats12)                    # [in_ch, H/4, W/4]
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- Build features for Side-ViT-2 -----
+        f4_up = F.interpolate(f4, size=f3.shape[-2:], mode='bilinear', align_corners=False)
+        feats34 = torch.cat([f3, f4_up], dim=1)
+        feats2 = self.proj_sv2(feats34)                    # [in_ch, H/4, W/4]
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # ----- # rd side vit cnn -----
+        embeddings = self.cnn(pixel_values).flatten(2).transpose(1, 2)
+        
+        # ----- Side-ViT predictions -----
+        probs1 = self.sidevit1(feats1, K_value, Q_value)
+        probs2 = self.sidevit2(feats2, K_value, Q_value)
+
+        # soft-voting
+        probs = (probs1 + probs2) / 2
+        return probs
+        
+
+
