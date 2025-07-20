@@ -44,11 +44,10 @@ def main(cfg):
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
     frozen_encoder, side_vit_model = generate_model(cfg)
+    # _, side_vit_model2 = generate_model(cfg)
 
     print(f"type cfg = {type(cfg)}")
     resnet_side_vit_model = ResNetSideViTClassifier(
-        num_classes=2,
-        vit_embed_dim=768//8,
         side_vit=side_vit_model,
         cfg=cfg,
         resnet_variant='resnet50',
