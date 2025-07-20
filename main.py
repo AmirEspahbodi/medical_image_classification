@@ -10,7 +10,7 @@ from train import train, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.side_resnet_vit import ResNetSideViTClassifier_FFN_FC, ResNetSideViTClassifier_FFN_MLP, ResNetSideViTClassifier_FC, ResNetSideViTClassifier_MLP
+from src.side_resnet_vit import ‎ResNetSideViTClassifier_MLP‎, ResNetSideViTClassifie_FC, ‎ResNetSideViTClassifier_FFN_MLP‎, ‎ResNetSideViTClassifie_FFN_FC
 
 
 @hydra.main(config_path="configs", config_name="config")
@@ -49,13 +49,13 @@ def main(cfg):
     print(f"type cfg = {type(cfg)}")
     match cfg.dataset.save_path:
         case resnet_sidevit_ffn_fc:
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_FC
+            ResNetSideViTClassifier = ResNetSideViTClassifie_FFN_FC ‎
         case resnet_sidevit_ffn_mlp:
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_MLP
+            ResNetSideViTClassifier = ‎‎ResNetSideViTClassifier_FFN_MLP‎ 
         case resnet_sidevit_fc:
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FC
+            ResNetSideViTClassifier = ResNetSideViTClassifie_FC
         case resnet_sidevit_mlp:
-            ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
+            ResNetSideViTClassifier = ResNetSideViTClassifier_MLP‎
         
     resnet_side_vit_model = ResNetSideViTClassifier(
         side_vit1=side_vit_model1,
