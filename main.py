@@ -15,7 +15,7 @@ from src.side_resnet_vit import (
     ResNetSideViTClassifier_MLP,
     ResNetSideViTClassifier_FC,
     ResNetSideViTClassifier_FFN_MLP,
-    ResNetSideViTClassifier_FFN_FC,ResNetSideViTClassifier_SV
+    ResNetSideViTClassifier_FFN_FC,ResNetSideViTClassifier_SV,ResNetSideViTClassifier_SV_3RDVIT
 )
 
 
@@ -50,30 +50,43 @@ def main(cfg):
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
     frozen_encoder, side_vit_model1 = generate_model(cfg)
-    _, side_vit_model2 = generate_model(cfg)
+    frozen_encoder2, side_vit_model2 = generate_model(cfg)
+    del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    match cfg.network.model:
-        case "resnet_sidevit_ffn_fc":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_FC
-        case "resnet_sidevit_ffn_mlp":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_MLP
-        case "resnet_sidevit_fc":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_FC
-        case "resnet_sidevit_mlp":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
-        case "resnet_sidevit_sv":
-            ResNetSideViTClassifier = ResNetSideViTClassifier_SV
-        case _:
-            raise RuntimeError()
-        
-    resnet_side_vit_model = ResNetSideViTClassifier(
-        side_vit1=side_vit_model1,
-        side_vit2=side_vit_model2,
-        cfg=cfg,
-        resnet_variant='resnet50',
-        pretrained=True,
-    ).to(cfg.base.device)
+    if cfg.network.model=="resnet_sidevit_sv_3rdvit":
+        frozen_encoder3, side_vit_model3 = generate_model(cfg)
+        del frozen_encoder3
+        resnet_side_vit_model = ResNetSideViTClassifier_SV_3RDVIT(
+            side_vit1=side_vit_model1,
+            side_vit2=side_vit_model2,
+            side_vit3=side_vit_model3,
+            cfg=cfg,
+            resnet_variant='resnet18',
+            pretrained=True,
+        ).to(cfg.base.device)
+    else:
+        match cfg.network.model:
+            case "resnet_sidevit_ffn_fc":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_FC
+            case "resnet_sidevit_ffn_mlp":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_MLP
+            case "resnet_sidevit_fc":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_FC
+            case "resnet_sidevit_mlp":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
+            case "resnet_sidevit_sv":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_SV
+            case _:
+                raise RuntimeError()
+            
+        resnet_side_vit_model = ResNetSideViTClassifier(
+            side_vit1=side_vit_model1,
+            side_vit2=side_vit_model2,
+            cfg=cfg,
+            resnet_variant='resnet18',
+            pretrained=True,
+        ).to(cfg.base.device)
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
         cfg=cfg,
