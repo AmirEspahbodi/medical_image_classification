@@ -13,6 +13,7 @@ from src.builder import generate_model, load_weights
 from src.side_resnet_vit import ‎ResNetSideViTClassifier_MLP‎, ResNetSideViTClassifie_FC, ‎ResNetSideViTClassifier_FFN_MLP‎, ‎ResNetSideViTClassifie_FFN_FC
 
 
+
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg):
     # print configuration
