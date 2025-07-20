@@ -132,6 +132,14 @@ class ResNetSideViTClassifier(nn.Module):
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
 
+        # MLP classifier: concatenate two 2-dim outputs -> 4-dim input
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 16)
+        self.mlp = nn.Sequential(
+            nn.Linear(4, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, 2)
+        )
+
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
         with torch.no_grad():
@@ -151,5 +159,10 @@ class ResNetSideViTClassifier(nn.Module):
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
 
-        probs = (vit_out1 + vit_out2) / 2
-        return probs
+        # probs = (vit_out1 + vit_out2) / 2
+
+                # Concatenate and classify via MLP
+        combined = torch.cat([vit_out1, vit_out2], dim=1) 
+        logits = self.mlp(combined) 
+        
+        return logits
