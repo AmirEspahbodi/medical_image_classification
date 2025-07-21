@@ -5,12 +5,13 @@ from src.utils.func import print_msg, select_out_features
 
 from .bridge import FineGrainedPromptTuning, FusionModule
 from .side_vit import ViTForImageClassification as SideViT
+from .side_vit_cnn import ViTForImageClassification as SideViTCNN
 from .frozen_vit import ViTForImageClassification as FrozenViT
 
 
 
-def generate_model(cfg):
-    model = build_model(cfg)
+def generate_model(cfg, use_cnn=False):
+    model = build_model(cfg, use_cnn=use_cnn)
     model = model.to(cfg.base.device)
 
     # the computation of the number of learnable parameters only works when the preloading is disabled
@@ -44,7 +45,7 @@ def load_weights(model, checkpoint):
     print_msg('Load weights form {}'.format(checkpoint))    
 
 
-def build_model(cfg):
+def build_model(cfg, use_cnn=False):
     out_features = select_out_features(
         cfg.dataset.num_classes,
         cfg.train.criterion
@@ -74,7 +75,10 @@ def build_model(cfg):
         hidden_dropout_prob=0,
         attention_probs_dropout_prob=0
     )
-    side_encoder = SideViT(side_config)
+    if not use_cnn:
+        side_encoder = SideViT(side_config)
+    else:
+        side_encoder = SideViTCNN(side_config)
 
     model = FineGrainedPromptTuning(side_encoder, fusion_module)
     return model

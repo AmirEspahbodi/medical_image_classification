@@ -15,7 +15,7 @@ from src.side_resnet_vit import (
     ResNetSideViTClassifier_MLP,
     ResNetSideViTClassifier_FC,
     ResNetSideViTClassifier_FFN_MLP,
-    ResNetSideViTClassifier_FFN_FC,ResNetSideViTClassifier_SV,ResNetSideViTClassifier_SV_3RDVIT
+    ResNetSideViTClassifier_FFN_FC,ResNetSideViTClassifier_SV, ResNetSideViTClassifier_FC_CNNVIT, ResNetSideViTClassifier_MLP_CNNVIT, ResNetSideViTClassifier_SV_CNNVIT
 )
 
 
@@ -54,17 +54,25 @@ def main(cfg):
     del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    if cfg.network.model=="resnet_sidevit_sv_3rdvit":
-        frozen_encoder3, side_vit_model3 = generate_model(cfg)
+    if cfg.network.model in ["resnet_sidevit_sv_cnn", "resnet_sidevit_mlp_cnn", "resnet_sidevit_fc_cnn"]:
+        frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
         del frozen_encoder3
-        resnet_side_vit_model = ResNetSideViTClassifier_SV_3RDVIT(
+        match cfg.network.model:
+            case "resnet_sidevit_sv_cnn":
+                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_SV_CNNVIT
+            case "resnet_sidevit_mlp_cnn":
+                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_MLP_CNNVIT
+            case "resnet_sidevit_fc_cnn":
+                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_FC_CNNVIT
+        resnet_side_vit_model = ResNetSideViTClassifier_3RDVIT(
             side_vit1=side_vit_model1,
             side_vit2=side_vit_model2,
-            side_vit3=side_vit_model3,
+            side_vit_cnn=side_vit_model_cnn,
             cfg=cfg,
-            resnet_variant='resnet18',
+            resnet_variant='resnet50',
             pretrained=True,
         ).to(cfg.base.device)
+        
     else:
         match cfg.network.model:
             case "resnet_sidevit_ffn_fc":
@@ -84,9 +92,10 @@ def main(cfg):
             side_vit1=side_vit_model1,
             side_vit2=side_vit_model2,
             cfg=cfg,
-            resnet_variant='resnet18',
+            resnet_variant='resnet50',
             pretrained=True,
         ).to(cfg.base.device)
+
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
         cfg=cfg,
