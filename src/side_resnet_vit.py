@@ -433,12 +433,12 @@ class ResNetSideViTClassifier_SV(nn.Module):
         # ----- Build features for Side-ViT-1 -----
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
         feats23 = torch.cat([f2, f3_up], dim=1)
-        feats1 = self.proj_sv1(feats34)                 # [in_ch, H/4, W/4]
-        feats1 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+        feats1 = self.proj_sv1(feats23)                 # [in_ch, H/4, W/4]
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Build features for Side-ViT-2 ----- 
         feats2 = self.proj_sv2(f4)                    # [in_ch, H/4, W/4]
-        feats2 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
         # ----- Side-ViT predictions -----
         probs1 = self.sidevit1(feats1, K_value, Q_value)
