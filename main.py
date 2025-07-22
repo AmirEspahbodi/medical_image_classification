@@ -64,7 +64,6 @@ def main(cfg):
             side_vit2=side_vit_model2,
             side_vit_cnn=side_vit_model_cnn,
             cfg=cfg,
-            resnet_variant='resnet50',
             pretrained=True,
         ).to(cfg.base.device)
         
