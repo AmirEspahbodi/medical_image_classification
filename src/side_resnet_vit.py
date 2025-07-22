@@ -201,7 +201,7 @@ class GatedAttentionFusion(nn.Module):
 # =====================================================================================
 # Main Model: The Advanced Hybrid Classifier
 # =====================================================================================
-class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module, # Assumed black box
