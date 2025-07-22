@@ -107,222 +107,200 @@ class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
         return logits
 
 #########################################################################################################
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.ops import FeaturePyramidNetwork
-from collections import OrderedDict
-from typing import Any, Dict, List
 import timm
+from torchvision.ops import FeaturePyramidNetwork
+from typing import Any, List
 
-# --- Component 1: Modular Backbone Feature Extractor ---
+# Assume side_vit1, side_vit2, side_vit_cnn are defined elsewhere as black boxes
+# from your_project import FineGrainedPromptTuning
+
+# =====================================================================================
+# Helper Module 1: CoAtNet Feature Extractor
+# =====================================================================================
 class CoAtNetFeatureExtractor(nn.Module):
     """
-    A wrapper for the CoAtNet backbone to extract intermediate features from its stages.
-    This encapsulates the backbone logic and provides a clean interface.
+    A wrapper around a timm-based CoAtNet model to easily extract features
+    from intermediate stages. CoAtNet-0 has 5 stages (0-4).
+    - s0: Conv Stem
+    - s1: Conv Block (MBConv)
+    - s2: Conv Block (MBConv)
+    - s3: Transformer Block
+    - s4: Transformer Block
     """
-    def __init__(self, coatnet_variant: str = 'coatnet_0.untrained', pretrained: bool = True):
+    def __init__(self, coatnet_variant: str = 'coatnet_0', pretrained: bool = True):
         super().__init__()
-        # Load the specified CoAtNet model from the timm library.
-        # Timm provides access to many SOTA models with pretrained weights.
-        # Note: As of late 2023, official 'coatnet_0' weights might not be in timm's default set.
-        # You might need to load them manually or use a similar variant.
-        # For demonstration, we use 'coatnet_0.untrained' to show architecture.
-        # In a real scenario, you would use pretrained=True with a valid model name.
-        self.backbone = timm.create_model(coatnet_variant, pretrained=pretrained, features_only=True)
+        # Using features_only=True returns a list of feature maps from each stage
+        self.backbone = timm.create_model(
+            coatnet_variant,
+            pretrained=pretrained,
+            features_only=True,
+        )
+        # Store channel dimensions for FPN and projection layers
+        self.feature_info = self.backbone.feature_info.channels()
+
+    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        return self.backbone(x)
+
+    def freeze_backbone(self):
+        """Helper function to freeze all backbone parameters."""
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+    def unfreeze_stage(self, stage_name: str):
+        """Helper to unfreeze a specific stage, e.g., 's4' or 's3'."""
+        # Note: timm's feature extractor wraps stages in blocks like 'blocks.0.0' etc.
+        # This requires inspecting the named_parameters to get the correct prefixes.
+        # A simpler approach for CoAtNet is to unfreeze layer by layer.
+        # Example for CoAtNet-0 s4 (last 2 blocks are transformer blocks)
+        if stage_name == 's4':
+            for param in self.backbone.blocks[3].parameters():
+                 param.requires_grad = True
+        elif stage_name == 's3':
+            for param in self.backbone.blocks[2].parameters():
+                 param.requires_grad = True
+        # Add other stages if needed
+
+# =====================================================================================
+# Helper Module 2: Attention-based Fusion
+# =====================================================================================
+class GatedAttentionFusion(nn.Module):
+    """
+    Learns to weigh the outputs of the three ViTs using a simple
+    gating/attention mechanism.
+    """
+    def __init__(self, input_dim: int, num_sources: int = 3):
+        super().__init__()
+        self.input_dim = input_dim
+        self.num_sources = num_sources
         
-        # The channel dimensions for coatnet_0 outputs
-        # From timm's documentation or by inspecting the model:
-        # s0: 64, s1: 64, s2: 96, s3: 192, s4: 384
-        self.out_channels = self.backbone.feature_info.channels()
-        print(f"CoAtNet backbone loaded. Feature channels: {self.out_channels}")
-
-
-    def forward(self, x: torch.Tensor) -> Dict:
-        # The `features_only=True` flag makes the model return a list of feature maps.
-        features = self.backbone(x)
-        # Return as a named dictionary for clarity, matching FPN's expected input format.
-        # We map the list indices to stage names.
-        return {f's{i+1}': feat for i, feat in enumerate(features[1:])} # Skip s0 (stem) for FPN
-
-# --- Component 2: Convolutional Stem for Raw Image Path ---
-class ConvStem(nn.Module):
-    """
-    A convolutional stem to replace the standard ViT patchify layer.
-    This provides more stable training and better performance by introducing
-    convolutional inductive bias early on.
-    Ref: "Early Convolutions Help Transformers See Better" (Xiao et al., 2021)
-    """
-    def __init__(self, in_channels: int, out_channels: int, patch_size: int):
-        super().__init__()
-        # A simple stem with two convolutional layers.
-        # This progressively downsamples the image and creates patch embeddings.
-        self.proj = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels // 2, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(out_channels // 2),
-            nn.GELU(),
-            nn.Conv2d(out_channels // 2, out_channels, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.GELU(),
+        # A simple network to generate attention weights (gates)
+        self.attention_net = nn.Sequential(
+            nn.Linear(input_dim * num_sources, 64),
+            nn.ReLU(),
+            nn.Linear(64, num_sources),
+            nn.Softmax(dim=1)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.proj(x)
-
-# --- Component 3: Feature Pyramid Network for Multi-Scale Fusion ---
-class FPN_Neck(nn.Module):
-    """
-    A Feature Pyramid Network (FPN) neck to fuse multi-scale features
-    from the CoAtNet backbone. This enriches shallow-layer features with
-    deep-layer semantics.
-    """
-    def __init__(self, in_channels_list: List[int], out_channels: int):
-        super().__init__()
-        self.fpn = FeaturePyramidNetwork(
-            in_channels_list=in_channels_list,
-            out_channels=out_channels,
-        )
-        # FPN returns an OrderedDict, we want to return a list of tensors
-        # in the order of the pyramid levels (from finest to coarsest).
-        self.out_channels = out_channels
-
-    def forward(self, x: Dict) -> Dict:
-        return self.fpn(x)
-
-# --- Component 4: Attention-based Fusion for ViT Outputs ---
-class AttentionFusion(nn.Module):
-    """
-    Intelligently fuses the outputs of the three side-ViTs using a simple
-    self-attention mechanism. This allows the model to dynamically weigh the
-    importance of each ViT's contribution for a given sample.
-    """
-    def __init__(self, feature_dim: int, num_heads: int = 4):
-        super().__init__()
-        self.num_vits = 3
-        self.feature_dim = feature_dim
+    def forward(self, vit_out1, vit_out2, vit_out3):
+        # Assuming each vit_out has shape [batch_size, input_dim]
+        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1) # [B, 3 * D]
         
-        # We treat the 3 ViT outputs as a sequence of length 3.
-        # A standard multi-head attention module is used for fusion.
-        self.attention = nn.MultiheadAttention(
-            embed_dim=feature_dim,
-            num_heads=num_heads,
-            batch_first=True
-        )
-        # A layer norm for stability
-        self.norm = nn.LayerNorm(feature_dim)
+        # Generate attention weights
+        attention_weights = self.attention_net(combined).unsqueeze(2) # [B, 3, 1]
+        
+        # Reshape inputs for weighted sum
+        all_vits = torch.stack([vit_out1, vit_out2, vit_out3], dim=1) # [B, 3, D]
 
-    def forward(self, vit_outputs: List) -> torch.Tensor:
-        # vit_outputs: A list of 3 tensors, each of shape [batch_size, feature_dim]
-        
-        # Stack the outputs to form a sequence: [batch_size, seq_len=3, feature_dim]
-        x = torch.stack(vit_outputs, dim=1)
-        
-        # The query, key, and value are all the same sequence (self-attention).
-        # We are interested in the aggregated output, so we take the first element of the tuple.
-        attn_output, _ = self.attention(x, x, x)
-        
-        # Add a residual connection and normalize
-        x = self.norm(x + attn_output)
-        
-        # Flatten the fused features to be passed to the MLP
-        # [batch_size, 3 * feature_dim]
-        return x.flatten(1)
+        # Apply attention weights
+        fused_output = torch.sum(all_vits * attention_weights, dim=1) # [B, D]
+        return fused_output
 
-# --- The Final Integrated Model ---
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+# =====================================================================================
+# Main Model: The Advanced Hybrid Classifier
+# =====================================================================================
+class AdvancedHybridClassifier(nn.Module):
     def __init__(
         self,
-        side_vit1,
-        side_vit2,
-        side_vit_cnn,
+        side_vit1: nn.Module, # Assumed black box
+        side_vit2: nn.Module, # Assumed black box
+        side_vit_cnn: nn.Module, # Assumed black box
         cfg: Any,
-        backbone_variant: str = 'coatnet_0.untrained',
+        backbone_variant: str = 'coatnet_0',
         pretrained_backbone: bool = True,
     ):
         super().__init__()
         self.cfg = cfg
-        num_classes: int = 2
+        num_classes = 2
+        vit_input_channels = cfg.dataset.image_channel_num # e.g., 3 channels for RGB
+        vit_output_dim = 2 # The output feature dim from each ViT, e.g., 2
 
-        # 1. Instantiate the CoAtNet Feature Extractor Backbone
+        # 1. --- ADVANCED BACKBONE ---
+        # Using CoAtNet for its superior hybrid architecture
         self.backbone = CoAtNetFeatureExtractor(backbone_variant, pretrained_backbone)
-        # [s1, s2, s3, s4] -> channels  for coatnet_0
-        backbone_channels = self.backbone.out_channels
-        
-        # 2. Instantiate the FPN Neck
-        # We will feed features from s1, s2, and s4 to the FPN, as per our design.
-        # The FPN will output features with a consistent channel dimension.
-        fpn_out_channels = 256
-        self.fpn_neck = FPN_Neck(
-            in_channels_list=[backbone_channels, backbone_channels, backbone_channels],
-            out_channels=fpn_out_channels
-        )
+        s1_ch, s2_ch, s3_ch, s4_ch = self.backbone.feature_info[1:] # Skip stem channels
 
-        # 3. Instantiate the Convolutional Stem for the raw image ViT
-        # The out_channels should match the expected in_channels of side_vit_cnn
-        # We assume side_vit_cnn has an `in_channels` attribute for this.
-        vit_cnn_in_channels = 128 # Example value
-        self.conv_stem = ConvStem(
-            in_channels=cfg.dataset.image_channel_num,
-            out_channels=vit_cnn_in_channels,
-            patch_size=4 # The stem effectively creates patches of size 4x4
+        # 2. --- ADVANCED FEATURE FUSION for Side-ViT-1 ---
+        # Use a Feature Pyramid Network (FPN) for rich multi-scale features
+        # It takes features from s1 and s2 and fuses them
+        self.fpn = FeaturePyramidNetwork(
+            in_channels_list=[s1_ch, s2_ch],
+            out_channels=256, # A common choice for FPN output channels
         )
+        # Projection from FPN output to the side-ViT input channels
+        self.proj_sv1 = nn.Conv2d(256, vit_input_channels, kernel_size=1)
 
-        # 4. Store the black-box Side-ViT classifiers
+        # 3. --- PROJECTION for Side-ViT-2 ---
+        # Simple projection from the final transformer stage (s4)
+        self.proj_sv2 = nn.Conv2d(s4_ch, vit_input_channels, kernel_size=1)
+
+        # 4. --- SIDE-VIT CLASSIFIERS (black boxes) ---
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
-        
-        # 5. Instantiate the Attention Fusion module and the final MLP head
-        # We assume the black-box ViTs output features of a certain dimension before the final layer.
-        # For this demo, we assume they all output `num_classes` logits.
-        # A better approach is to modify the ViTs to return pre-logit features.
-        # Let's assume the feature dimension is `num_classes` for simplicity.
-        vit_feature_dim = num_classes
-        self.attention_fusion = AttentionFusion(feature_dim=vit_feature_dim)
 
-        self.mlp_head = nn.Sequential(
-            nn.Linear(self.num_vits * vit_feature_dim, 16),
+        # 5. --- ADVANCED FUSION of ViT OUTPUTS ---
+        self.fusion_module = GatedAttentionFusion(input_dim=vit_output_dim, num_sources=3)
+
+        # 6. --- ROBUST CLASSIFIER HEAD ---
+        # A deeper MLP with BatchNorm and Dropout for regularization
+        mlp_hidden_dim = getattr(cfg.model, 'mlp_hidden_dim', 16)
+        dropout_rate = getattr(cfg.model, 'dropout_rate', 0.3)
+        self.classifier_head = nn.Sequential(
+            nn.Linear(vit_output_dim, mlp_hidden_dim),
+            nn.BatchNorm1d(mlp_hidden_dim),
             nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(16, num_classes)
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(mlp_hidden_dim, num_classes)
         )
 
-    def forward(self, x: torch.Tensor, K_value: Any, Q_value: Any) -> torch.Tensor:
-        # Phase 1: Backbone Feature Extraction
-        # Get multi-scale features from the CoAtNet backbone.
-        backbone_feats = self.backbone(x)
+        # --- Initialize weights for newly added layers ---
+        self._init_weights()
         
-        # Phase 2: FPN Fusion
-        # Select the features for the FPN and process them.
-        fpn_input = OrderedDict()
-        fpn_input['s1'] = backbone_feats['s1']
-        fpn_input['s2'] = backbone_feats['s2']
-        fpn_input['s4'] = backbone_feats['s4']
-        fpn_output = self.fpn_neck(fpn_input)
+    def _init_weights(self):
+        """Initialize weights for FPN, projections, and classifier head."""
+        for m in [self.fpn, self.proj_sv1, self.proj_sv2, self.classifier_head]:
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
-        # Phase 3: Prepare inputs for each Side-ViT
-        # Input for side_vit1 from FPN level corresponding to s2
-        feats_for_sv1 = fpn_output['1'] # FPN names outputs '0', '1', '2', etc.
+    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
+        # 1. --- EXTRACT HIERARCHICAL FEATURES from CoAtNet ---
+        # features is a list of tensors from s0, s1, s2, s3, s4
+        features = self.backbone(x)
+        s0, s1, s2, s3, s4 = features
+
+        # 2. --- INPUT for Side-ViT-CNN (from CONV STEM) ---
+        # Use the output of the first stage (s0) as a "learned patch embedding"
+        # This is much better than feeding raw pixels.
+        feats_cnn = F.interpolate(s0, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_out3 = self.side_vit_cnn(feats_cnn, K_value, Q_value)
+
+        # 3. --- INPUT for Side-ViT-1 (from FPN) ---
+        # Feed s1 and s2 into the FPN to get fused multi-scale features
+        fpn_input = {'feat0': s1, 'feat1': s2}
+        fpn_output = self.fpn(fpn_input)
+        # Use the finest-resolution feature map from the FPN output
+        feats_fpn = fpn_output['feat0']
+        feats1 = self.proj_sv1(feats_fpn)
+        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
+
+        # 4. --- INPUT for Side-ViT-2 (from FINAL STAGE) ---
+        feats2 = self.proj_sv2(s4)
+        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_out2 = self.sidevit2(feats2, K_value, Q_value)
+
+        # 5. --- FUSE ViT OUTPUTS using ATTENTION ---
+        # The fusion module will learn to weigh the importance of each ViT path
+        fused_vector = self.fusion_module(vit_out1, vit_out2, vit_out3)
         
-        # Input for side_vit2 from FPN level corresponding to s4
-        feats_for_sv2 = fpn_output['2']
-        
-        # Input for side_vit_cnn from our custom ConvStem
-        feats_for_svc = self.conv_stem(x)
-        
-        # Phase 4: Get predictions from each Side-ViT
-        # Note: The black-box ViTs must be adapted to accept the channel dimensions
-        # from the FPN (256) and ConvStem (128). This is a critical assumption.
-        vit_out1 = self.sidevit1(feats_for_sv1, K_value, Q_value)
-        vit_out2 = self.sidevit2(feats_for_sv2, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(feats_for_svc, K_value, Q_value)
-        
-        # Phase 5: Fuse outputs and classify
-        # Use the attention fusion module
-        fused_features = self.attention_fusion([vit_out1, vit_out2, vit_out3])
-        
-        # Final classification
-        logits = self.mlp_head(fused_features)
-        
+        # 6. --- FINAL CLASSIFICATION ---
+        logits = self.classifier_head(fused_vector)
         return logits
