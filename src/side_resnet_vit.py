@@ -114,76 +114,108 @@ from typing import Any
 import timm
 
 
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+def make_se_block(channels: int, reduction: int = 16) -> nn.Module:
+    """
+    Squeeze-and-Excitation block to recalibrate channel-wise features.
+    """
+    return nn.Sequential(
+        nn.AdaptiveAvgPool2d(1),
+        nn.Conv2d(channels, channels // reduction, 1, bias=True),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(channels // reduction, channels, 1, bias=True),
+        nn.Sigmoid()
+    )
+
+
+class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
-        side_vit1,
-        side_vit2,
-        side_vit_cnn,
+        side_vit1: nn.Module,
+        side_vit2: nn.Module,
+        side_vit_cnn: nn.Module,
         cfg: Any,
         pretrained: bool = True,
     ):
         super().__init__()
-        # Load CoAtNet backbone using timm
+        # Load CoAtNet backbone with feature stages
         self.backbone = timm.create_model(
             'coatnet_0_rw_224',
             pretrained=pretrained,
-            features_only=True
+            features_only=True,
+            out_indices=(2, 3, 4)
         )
 
-        # --- FIX: Use the correct channel dimensions for coatnet_0_rw_224 ---
+        # Get channel dims for stages
         c2, c3, c4 = 192, 384, 768
-
-        # Freeze backbone
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-
-        # Projection layers now correctly initialized
-        # proj_sv1 input: c2 + c3 = 192 + 384 = 576 channels
         in_ch = cfg.dataset.image_channel_num
-        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
-        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
 
-        # Side-ViT classifiers
+        # --- Fine-tune selected backbone blocks ---
+        # Unfreeze stage 2, 3 and 4 layers
+        for idx, stage in enumerate(self.backbone.stages):
+            if idx in [2, 3, 4]:  # stages numbering may vary
+                for param in stage.parameters():
+                    param.requires_grad = True
+            else:
+                for param in stage.parameters():
+                    param.requires_grad = False
+
+        # Projection + SE + Norm for Side-ViT inputs
+        # Side-ViT1 input = concat of f2 + f3
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.se_sv1 = make_se_block(in_ch)
+        self.norm_sv1 = nn.GroupNorm(8, in_ch)
+        self.drop_sv1 = nn.Dropout2d(p=0.1)
+
+        # Side-ViT2 input = f4
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
+        self.se_sv2 = make_se_block(in_ch)
+        self.norm_sv2 = nn.GroupNorm(8, in_ch)
+        self.drop_sv2 = nn.Dropout2d(p=0.1)
+
+        # Side-ViT modules
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # MLP head
-        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
-        self.mlp = nn.Sequential(
-            nn.Linear(6, hidden_dim),
+        # Final fusion and classification
+        fusion_dim = 6
+        hidden_dim = 12
+        self.classifier = nn.Sequential(
+            nn.Linear(fusion_dim, hidden_dim),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
-        # Resize input for the CoAtNet backbone to its expected 224x224 size
-        x_backbone_input = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
+        # Resize for backbone
+        x_back = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        features = self.backbone(x_back)
+        f2, f3, f4 = features  # shapes: [B, C2, H2, W2], etc.
 
-        # Extract hierarchical features (backbone frozen)
-        with torch.no_grad():
-            features = self.backbone(x_backbone_input)
-            f2 = features[2]  # Output of stage 2 (192 channels)
-            f3 = features[3]  # Output of stage 3 (384 channels)
-            f4 = features[4]  # Output of stage 4 (768 channels)
-
-        # Build features for Side-ViT-1
+        # Side-ViT1 path
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-        feats23 = torch.cat([f2, f3_up], dim=1) # Shape: [batch, 576, H, W]
-        feats1 = self.proj_sv1(feats23) # proj_sv1 now correctly expects 576 channels
-        feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
+        feats23 = torch.cat([f2, f3_up], dim=1)
+        sv1 = self.proj_sv1(feats23)
+        se1 = self.se_sv1(sv1) * sv1
+        sv1 = self.norm_sv1(se1)
+        sv1 = self.drop_sv1(sv1)
+        sv1 = F.interpolate(sv1, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # Build features for Side-ViT-2
-        feats2 = self.proj_sv2(f4)
-        feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
+        # Side-ViT2 path
+        sv2 = self.proj_sv2(f4)
+        se2 = self.se_sv2(sv2) * sv2
+        sv2 = self.norm_sv2(se2)
+        sv2 = self.drop_sv2(sv2)
+        sv2 = F.interpolate(sv2, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # Side-ViT predictions
-        vit_out1 = self.sidevit1(feats1, K_value, Q_value)
-        vit_out2 = self.sidevit2(feats2, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(x, K_value, Q_value) # Use original 'x' here
+        # Obtain side-ViT outputs
+        out1 = self.sidevit1(sv1, K_value, Q_value)
+        out2 = self.sidevit2(sv2, K_value, Q_value)
+        out3 = self.side_vit_cnn(x, K_value, Q_value)
 
-        # Combine and classify
-        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
-        logits = self.mlp(combined)
+        # Fuse and classify
+        combined = torch.cat([out1, out2, out3], dim=1)
+        logits = self.classifier(combined)
         return logits
+
