@@ -114,7 +114,7 @@ from typing import Any
 import timm
 
 
-class ResNetSideViTClassifier_MLP_CNNVIT_old(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1,
