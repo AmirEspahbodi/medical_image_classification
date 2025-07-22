@@ -208,7 +208,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         side_vit2: nn.Module, # Assumed black box
         side_vit_cnn: nn.Module, # Assumed black box
         cfg: Any,
-        backbone_variant: str = 'coatnet_0_224',
+        backbone_variant: str = 'coatnet_0_rw_224',
         pretrained_backbone: bool = True,
     ):
         super().__init__()
