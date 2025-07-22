@@ -22,7 +22,7 @@ def apply_augmentation(image):
         PIL.Image.Image: The augmented image.
     """
     # List of augmentation techniques
-    techniques = ['rotate', 'scale', 'contrast', 'noise']
+    techniques = ['rotate', 'scale', 'contrast'] #, 'noise'
     chosen_technique = random.choice(techniques)
 
     if chosen_technique == 'rotate':
