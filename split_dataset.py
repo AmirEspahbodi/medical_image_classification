@@ -4,160 +4,168 @@ import random
 from pathlib import Path
 import logging
 
-# Configure logging to provide progress updates
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def create_directory_structure(destination_root, classes):
     """
-    Creates the necessary directory structure (train, validation, test) for each class.
+    Create the necessary directory structure for the dataset.
     """
-    logger.info("Creating directory structure...")
     for split in ['train', 'validation', 'test']:
         for class_name in classes:
             folder_path = os.path.join(destination_root, split, class_name)
             os.makedirs(folder_path, exist_ok=True)
-    logger.info("Directory structure created successfully.")
+            logger.info(f"Created directory: {folder_path}")
 
-def copy_files_to_validation(source_root, dest_root, source_split, ratio, classes, random_seed):
+# --- MODIFIED FUNCTION ---
+# Renamed from 'move_files_between_splits' to 'copy_files_between_splits'
+def copy_files_between_splits(source_root, destination_root, source_split, target_split, ratio, classes, random_seed=42):
     """
-    Copies a specified ratio of files from a source split (train or test) to the validation set.
+    Copy a specific ratio of files from source_split to target_split.
     """
     random.seed(random_seed)
     total_copied = 0
     
-    logger.info(f"Copying {ratio:.0%} of files from '{source_split}' set to 'validation' set.")
-    
     for class_name in classes:
         source_dir = os.path.join(source_root, source_split, class_name)
-        target_dir = os.path.join(dest_root, 'validation', class_name)
+        target_dir = os.path.join(destination_root, target_split, class_name)
         
+        # Ensure directories exist
+        os.makedirs(target_dir, exist_ok=True)
+        
+        # Get all files in the source directory
         try:
             files = [f for f in os.listdir(source_dir) if os.path.isfile(os.path.join(source_dir, f))]
-            if not files:
+            num_files = len(files)
+            
+            if num_files == 0:
                 logger.warning(f"No files found in {source_dir}")
                 continue
                 
-            # Calculate the number of files to copy
-            num_to_copy = int(len(files) * ratio)
+            # Calculate number of files to copy
+            num_to_copy = int(num_files * ratio)
             files_to_copy = random.sample(files, num_to_copy)
             
-            logger.info(f"Copying {len(files_to_copy)} files from {source_dir} to {target_dir}")
+            logger.info(f"Copying {num_to_copy} files from {source_dir} to {target_dir}")
             
-            # Copy the selected files
-            for file_name in files_to_copy:
-                source_path = os.path.join(source_dir, file_name)
-                dest_path = os.path.join(target_dir, file_name)
-                shutil.copy2(source_path, dest_path) # Use copy2 to preserve metadata
-                total_copied += 1
-
-        except FileNotFoundError:
-            logger.error(f"Source directory not found: {source_dir}")
+            # Copy the files
+            for file in files_to_copy:
+                source_path = os.path.join(source_dir, file)
+                dest_path = os.path.join(target_dir, file)
+                
+                try:
+                    shutil.copy2(source_path, dest_path)
+                    # --- KEY CHANGE ---
+                    # The os.remove(source_path) line was deleted to prevent moving the file.
+                    total_copied += 1
+                except Exception as e:
+                    logger.error(f"Failed to copy {file}: {str(e)}")
+            
         except Exception as e:
-            logger.error(f"Error processing directory {source_dir}: {e}")
-            
+            logger.error(f"Error processing directory {source_dir}: {str(e)}")
+    
     return total_copied
 
-def setup_dataset(original_path, target_path, val_ratio=0.1, random_seed=42):
+def setup_dataset(original_path, target_path, val_from_test_ratio=1.0, random_seed=42):
     """
-    Sets up the new dataset structure by copying files.
+    Set up the dataset with train, test, and validation splits.
     
     Args:
-        original_path (str): Path to the original dataset.
-        target_path (str): Path where the new dataset will be created.
-        val_ratio (float): Ratio of images from train/test to copy to the validation set.
-        random_seed (int): Seed for reproducibility.
+        original_path: Path to the original dataset
+        target_path: Path where the reorganized dataset will be stored
+        val_from_test_ratio: Ratio of test files to copy to validation
+        random_seed: Random seed for reproducibility
     """
+    # Get class names
     try:
-        # Get class names from the original training directory
-        classes = [d for d in os.listdir(os.path.join(original_path, 'train')) if os.path.isdir(os.path.join(original_path, 'train', d))]
-        if not classes:
-            logger.error(f"No class subdirectories found in {os.path.join(original_path, 'train')}")
-            return False
-        logger.info(f"Detected classes: {classes}")
-    except FileNotFoundError:
-        logger.error(f"Original dataset path not found: {original_path}")
+        classes = os.listdir(os.path.join(original_path, 'train'))
+        logger.info(f"Found classes: {classes}")
+    except Exception as e:
+        logger.error(f"Failed to get classes: {str(e)}")
         return False
-
-    # 1. Create the full directory structure in the target location
+    
+    # Create directory structure
     create_directory_structure(target_path, classes)
-
-    # 2. Copy all original train and test files to the new train and test directories
-    logger.info("--- Step 1: Copying original train and test sets to new location ---")
+    
+    # First, copy all files to maintain the original structure
     for split in ['train', 'test']:
         for class_name in classes:
             source_class_dir = os.path.join(original_path, split, class_name)
             target_class_dir = os.path.join(target_path, split, class_name)
+            
             try:
-                shutil.copytree(source_class_dir, target_class_dir, dirs_exist_ok=True)
-                logger.info(f"Successfully copied all files from {source_class_dir} to {target_class_dir}")
+                # Get all files
+                files = [f for f in os.listdir(source_class_dir) if os.path.isfile(os.path.join(source_class_dir, f))]
+                
+                logger.info(f"Copying {len(files)} files from {source_class_dir} to {target_class_dir}")
+                
+                # Copy files
+                for file in files:
+                    source_file = os.path.join(source_class_dir, file)
+                    target_file = os.path.join(target_class_dir, file)
+                    shutil.copy2(source_file, target_file)
             except Exception as e:
-                logger.error(f"Failed to copy tree from {source_class_dir}: {e}")
+                logger.error(f"Error copying files for {class_name} in {split}: {str(e)}")
     
-    # 3. Populate the validation set by COPYING from the ORIGINAL train and test sets
-    logger.info("--- Step 2: Creating validation set by copying from original sources ---")
+    # Create validation set by copying files from test
+    copied_to_val = copy_files_between_splits( # Using the modified function
+        target_path, target_path, 
+        'test', 'validation', 
+        val_from_test_ratio, classes, random_seed
+    )
+    logger.info(f"Copied {copied_to_val} files from test to validation")
     
-    # Copy 10% from the original training set to validation
-    copied_from_train = copy_files_to_validation(original_path, target_path, 'train', val_ratio, classes, random_seed)
-    
-    # Copy 10% from the original test set to validation
-    # Use a different seed for sampling from the test set to ensure different random choices
-    copied_from_test = copy_files_to_validation(original_path, target_path, 'test', val_ratio, classes, random_seed + 1)
-    
-    logger.info(f"Total files copied to validation: {copied_from_train} from train, {copied_from_test} from test.")
     return True
 
 def count_files_in_dataset(dataset_path):
-    """Prints the number of files in each split and class of the dataset."""
-    print("\n" + "="*30)
-    print("📊 FINAL DATASET FILE COUNT")
-    print("="*30)
+    """Print statistics about the dataset."""
     try:
+        # Check for classes in the train directory first
+        train_path = os.path.join(dataset_path, 'train')
+        if not os.path.exists(train_path):
+            print(f"Error: 'train' directory not found in {dataset_path}")
+            return
+            
+        classes = os.listdir(train_path)
+        
         for split in ['train', 'validation', 'test']:
-            split_path = os.path.join(dataset_path, split)
-            if not os.path.exists(split_path):
-                print(f"\n{split.upper()} SET: Not found")
-                continue
+            total = 0
+            print(f"\n{split.upper()} SET:")
             
-            total_split_files = 0
-            print(f"\n📁 {split.upper()} SET:")
-            
-            classes = sorted([d for d in os.listdir(split_path) if os.path.isdir(os.path.join(split_path, d))])
             for class_name in classes:
-                class_dir = os.path.join(split_path, class_name)
-                file_count = len([f for f in os.listdir(class_dir) if os.path.isfile(os.path.join(class_dir, f))])
-                print(f"  - {class_name}: {file_count} files")
-                total_split_files += file_count
-            print(f"  --------------------")
-            print(f"  ✅ TOTAL: {total_split_files} files")
+                class_dir = os.path.join(dataset_path, split, class_name)
+                if os.path.exists(class_dir):
+                    files = [f for f in os.listdir(class_dir) if os.path.isfile(os.path.join(class_dir, f))]
+                    file_count = len(files)
+                    total += file_count
+                    print(f"  {class_name}: {file_count} files")
+                else:
+                    print(f"  {class_name}: Directory not found")
             
+            print(f"  TOTAL: {total} files")
     except Exception as e:
-        print(f"Error counting files: {e}")
+        print(f"Error counting files: {str(e)}")
 
 def main():
-    # --- Parameters ---
-    # NOTE: Ensure these paths exist in your environment.
-    original_dataset = '/content/dataset/chest_xray' 
+    # Define paths
+    original_dataset = '/content/dataset/chest_xray'
     target_dataset = '/content/dataset/splited_chest_xray'
-    validation_ratio = 0.10  # 10% for validation set from both train and test
+    
+    # --- KEY CHANGE ---
+    # Set ratio to 1.0 to copy ALL test files to validation
+    val_from_test_ratio = 1.0 
+    
     random_seed = 42
     
-    # Clean up target directory if it exists to ensure a fresh start
-    if os.path.exists(target_dataset):
-        logger.warning(f"Target directory {target_dataset} already exists. Removing it for a fresh start.")
-        shutil.rmtree(target_dataset)
-
-    print(f"🚀 Starting dataset setup...")
-    print(f"Source: {original_dataset}")
-    print(f"Destination: {target_dataset}")
-    
-    success = setup_dataset(original_dataset, target_dataset, validation_ratio, random_seed)
+    print(f"Setting up dataset from {original_dataset} to {target_dataset}")
+    success = setup_dataset(original_dataset, target_dataset, val_from_test_ratio, random_seed)
     
     if success:
-        print("\n🎉 Dataset setup completed successfully!")
+        print("\nDataset setup complete. File counts:")
         count_files_in_dataset(target_dataset)
     else:
-        print("\n❌ Dataset setup failed. Please check the log messages for errors.")
+        print("Dataset setup failed. Check logs for details.")
 
 if __name__ == "__main__":
     main()
