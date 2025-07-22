@@ -293,12 +293,12 @@ class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
         out3 = self.sidevit_cnn(feat3, K_value, Q_value)
 
         combined = torch.cat([out1, out2, out3], dim=1)
-        attn     = self.se(combined)
-        fused    = combined * attn
+        # attn     = self.se(combined)
+        # fused    = combined * attn
 
-        x = self.norm(fused)
-        x = self.dropout(x)
-        logits = self.classifier(x)
+        # x = self.norm(fused)
+        # x = self.dropout(x)
+        logits = self.classifier(combined) #combined
         return logits
 
 
