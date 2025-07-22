@@ -114,108 +114,98 @@ from typing import Any
 import timm
 
 
-def make_se_block(channels: int, reduction: int = 16) -> nn.Module:
-    """
-    Squeeze-and-Excitation block to recalibrate channel-wise features.
-    """
-    return nn.Sequential(
-        nn.AdaptiveAvgPool2d(1),
-        nn.Conv2d(channels, channels // reduction, 1, bias=True),
-        nn.ReLU(inplace=True),
-        nn.Conv2d(channels // reduction, channels, 1, bias=True),
-        nn.Sigmoid()
-    )
-
-
 class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
-        side_vit1: nn.Module,
-        side_vit2: nn.Module,
-        side_vit_cnn: nn.Module,
+        side_vit1,
+        side_vit2,
+        side_vit_cnn,
         cfg: Any,
         pretrained: bool = True,
     ):
         super().__init__()
-        # Load CoAtNet backbone with feature stages
+        # --- Backbone: CoAtNet ---
         self.backbone = timm.create_model(
-            'coatnet_0_rw_224',
-            pretrained=pretrained,
-            features_only=True,
-            out_indices=(2, 3, 4)
+            'coatnet_0_rw_224', pretrained=pretrained, features_only=True
+        )
+        # Freeze all except stage-3 and stage-4 (blocks 2 and 3)
+        for name, param in self.backbone.named_parameters():
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
+        # Channel dims for CoAtNet stages
+        c2, c3, c4 = 192, 384, 768
+        in_ch = cfg.dataset.image_channel_num  # e.g. 3 for RGB
+
+        # --- Projection + Adapter for Side-ViT inputs ---
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
+        self.adapt_sv1 = nn.Sequential(
+            nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(in_ch),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=0.1)
         )
 
-        # Get channel dims for stages
-        c2, c3, c4 = 192, 384, 768
-        in_ch = cfg.dataset.image_channel_num
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
+        self.adapt_sv2 = nn.Sequential(
+            nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(in_ch),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=0.1)
+        )
 
-        # --- Fine-tune selected backbone blocks ---
-        # Unfreeze stage 2, 3 and 4 layers
-        for idx, stage in enumerate(self.backbone.stages):
-            if idx in [2, 3, 4]:  # stages numbering may vary
-                for param in stage.parameters():
-                    param.requires_grad = True
-            else:
-                for param in stage.parameters():
-                    param.requires_grad = False
-
-        # Projection + SE + Norm for Side-ViT inputs
-        # Side-ViT1 input = concat of f2 + f3
-        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
-        self.se_sv1 = make_se_block(in_ch)
-        self.norm_sv1 = nn.GroupNorm(8, in_ch)
-        self.drop_sv1 = nn.Dropout2d(p=0.1)
-
-        # Side-ViT2 input = f4
-        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
-        self.se_sv2 = make_se_block(in_ch)
-        self.norm_sv2 = nn.GroupNorm(8, in_ch)
-        self.drop_sv2 = nn.Dropout2d(p=0.1)
-
-        # Side-ViT modules
+        # Side-ViT ensembles (treated as black boxes)
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # Final fusion and classification
-        fusion_dim = 6
-        hidden_dim = 12
-        self.classifier = nn.Sequential(
-            nn.Linear(fusion_dim, hidden_dim),
+        # Learnable fusion weights for side-ViT outputs
+        self.fusion_logits = nn.Parameter(torch.zeros(3))
+
+        # Final MLP (unchanged)
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.dataset.num_classes * 3, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # Resize for backbone
-        x_back = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        features = self.backbone(x_back)
-        f2, f3, f4 = features  # shapes: [B, C2, H2, W2], etc.
+        # Optional: Label smoothing loss can be plugged externally
 
-        # Side-ViT1 path
+    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
+        # 1) Preprocess for backbone
+        x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        features = self.backbone(x_backbone)
+        f2, f3, f4 = features[2], features[3], features[4]
+
+        # 2) Side-ViT-1 input (multi-scale fusion)
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
         feats23 = torch.cat([f2, f3_up], dim=1)
-        sv1 = self.proj_sv1(feats23)
-        se1 = self.se_sv1(sv1) * sv1
-        sv1 = self.norm_sv1(se1)
-        sv1 = self.drop_sv1(sv1)
-        sv1 = F.interpolate(sv1, size=(128, 128), mode='bilinear', align_corners=False)
+        sv1_in = self.proj_sv1(feats23)
+        sv1_in = self.adapt_sv1(F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False))
 
-        # Side-ViT2 path
-        sv2 = self.proj_sv2(f4)
-        se2 = self.se_sv2(sv2) * sv2
-        sv2 = self.norm_sv2(se2)
-        sv2 = self.drop_sv2(sv2)
-        sv2 = F.interpolate(sv2, size=(128, 128), mode='bilinear', align_corners=False)
+        # 3) Side-ViT-2 input
+        sv2_in = self.proj_sv2(f4)
+        sv2_in = self.adapt_sv2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False))
 
-        # Obtain side-ViT outputs
-        out1 = self.sidevit1(sv1, K_value, Q_value)
-        out2 = self.sidevit2(sv2, K_value, Q_value)
-        out3 = self.side_vit_cnn(x, K_value, Q_value)
+        # 4) Side-ViT-CNN input (raw image with augmentation applied upstream if any)
+        sv3_in = x
 
-        # Fuse and classify
-        combined = torch.cat([out1, out2, out3], dim=1)
-        logits = self.classifier(combined)
+        # 5) Forward through Side-ViTs (black boxes)
+        out1 = self.sidevit1(sv1_in, K_value, Q_value)
+        out2 = self.sidevit2(sv2_in, K_value, Q_value)
+        out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
+
+        # 6) Adaptive fusion of side outputs
+        weights = torch.softmax(self.fusion_logits, dim=0)
+        fused = weights[0] * out1 + weights[1] * out2 + weights[2] * out3
+
+        # 7) Final classification
+        # If instead concatenation is desired:
+        # fused = torch.cat([out1, out2, out3], dim=1)
+        logits = self.mlp(fused)
         return logits
 
