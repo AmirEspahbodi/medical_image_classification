@@ -64,7 +64,7 @@ def main(cfg):
             side_vit2=side_vit_model2,
             side_vit_cnn=side_vit_model_cnn,
             cfg=cfg,
-            pretrained=True,
+            # pretrained=True,
         ).to(cfg.base.device)
         
     else:
