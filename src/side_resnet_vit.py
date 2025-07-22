@@ -128,7 +128,7 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=pretrained, features_only=True
         )
-        # Freeze all except stage-3 and stage-4 (blocks 2 and 3)
+        # Freeze all except stage-3 (blocks 2) and stage-4 (blocks 3)
         for name, param in self.backbone.named_parameters():
             if any([f'blocks.{i}' in name for i in (2, 3)]):
                 param.requires_grad = True
@@ -138,6 +138,7 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         # Channel dims for CoAtNet stages
         c2, c3, c4 = 192, 384, 768
         in_ch = cfg.dataset.image_channel_num  # e.g. 3 for RGB
+        num_classes = 2
 
         # --- Projection + Adapter for Side-ViT inputs ---
         self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
@@ -164,16 +165,14 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         # Learnable fusion weights for side-ViT outputs
         self.fusion_logits = nn.Parameter(torch.zeros(3))
 
-        # Final MLP (unchanged)
+        # Final MLP head now matches summed fusion dimension
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
-            nn.Linear(cfg.dataset.num_classes * 3, hidden_dim),
+            nn.Linear(num_classes, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.2),
-            nn.Linear(hidden_dim, cfg.dataset.num_classes)
+            nn.Linear(hidden_dim, num_classes)
         )
-
-        # Optional: Label smoothing loss can be plugged externally
 
     def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
         # 1) Preprocess for backbone
@@ -191,7 +190,7 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         sv2_in = self.proj_sv2(f4)
         sv2_in = self.adapt_sv2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False))
 
-        # 4) Side-ViT-CNN input (raw image with augmentation applied upstream if any)
+        # 4) Side-ViT-CNN input (raw image with aug applied upstream if any)
         sv3_in = x
 
         # 5) Forward through Side-ViTs (black boxes)
@@ -199,13 +198,11 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         out2 = self.sidevit2(sv2_in, K_value, Q_value)
         out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
 
-        # 6) Adaptive fusion of side outputs
+        # 6) Adaptive fusion of side outputs (sum with learned weights)
         weights = torch.softmax(self.fusion_logits, dim=0)
         fused = weights[0] * out1 + weights[1] * out2 + weights[2] * out3
 
         # 7) Final classification
-        # If instead concatenation is desired:
-        # fused = torch.cat([out1, out2, out3], dim=1)
         logits = self.mlp(fused)
         return logits
 
