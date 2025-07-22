@@ -233,9 +233,9 @@ class AttentionFusion(nn.Module):
 class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
-        side_vit1: FineGrainedPromptTuning,
-        side_vit2: FineGrainedPromptTuning,
-        side_vit_cnn: FineGrainedPromptTuning,
+        side_vit1,
+        side_vit2,
+        side_vit_cnn,
         cfg: Any,
         backbonet: str = 'coatnet_0.untrained',
         pretrained: bool = True,
