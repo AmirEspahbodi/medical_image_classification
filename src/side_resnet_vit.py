@@ -716,7 +716,7 @@ def se_block(channels: int, reduction: int = 2) -> nn.Module:
         nn.Sigmoid()
     )
 
-class RobustResNetSideViTClassifier(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
