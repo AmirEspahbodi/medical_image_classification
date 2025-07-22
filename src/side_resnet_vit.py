@@ -336,7 +336,7 @@ class FusionAdapter(nn.Module):
         out = x2d.permute(0, 2, 1).view(B, C, H, W)
         return out
 
-class HybridSideViTClassifier(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
