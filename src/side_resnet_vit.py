@@ -246,8 +246,8 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
 
         # 6. --- ROBUST CLASSIFIER HEAD ---
         # A deeper MLP with BatchNorm and Dropout for regularization
-        mlp_hidden_dim = getattr(cfg.model, 'mlp_hidden_dim', 16)
-        dropout_rate = getattr(cfg.model, 'dropout_rate', 0.3)
+        mlp_hidden_dim = 16
+        dropout_rate = 0.3
         self.classifier_head = nn.Sequential(
             nn.Linear(vit_output_dim, mlp_hidden_dim),
             nn.BatchNorm1d(mlp_hidden_dim),
