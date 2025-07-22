@@ -705,17 +705,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-# Squeeze-and-Excitation block for channel-wise attention
-def se_block(channels: int, reduction: int = 16) -> nn.Module:
+# Squeeze-and-Excitation block tailored for small total_dim
+def se_block(channels: int, reduction: int = 2) -> nn.Module:
+    inner_dim = max(channels // reduction, 1)
     return nn.Sequential(
         nn.AdaptiveAvgPool2d(1),
-        nn.Conv2d(channels, channels // reduction, kernel_size=1, bias=False),
+        nn.Conv2d(channels, inner_dim, kernel_size=1, bias=False),
         nn.ReLU(inplace=True),
-        nn.Conv2d(channels // reduction, channels, kernel_size=1, bias=False),
+        nn.Conv2d(inner_dim, channels, kernel_size=1, bias=False),
         nn.Sigmoid()
     )
 
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class RobustResNetSideViTClassifier(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -741,10 +742,10 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
 
         # Backbone feature extractors
         self.stem  = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
-        self.layer1 = backbone.layer1  # out: channels[0]
-        self.layer2 = backbone.layer2  # out: channels[1]
-        self.layer3 = backbone.layer3  # out: channels[2]
-        self.layer4 = backbone.layer4  # out: channels[3]
+        self.layer1 = backbone.layer1  
+        self.layer2 = backbone.layer2  
+        self.layer3 = backbone.layer3  
+        self.layer4 = backbone.layer4  
 
         # Feature Pyramid: lateral convs to unify channel dims
         self.lateral2 = nn.Conv2d(channels[1], cfg.dataset.image_channel_num, kernel_size=1)
@@ -757,29 +758,29 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         self.sidevit_cnn  = side_vit_cnn
 
         # Channel attention on combined ViT outputs
-        # Assuming each side_vit returns vector of dim side_dim
-        side_dim = 2
-        total_dim = side_dim * 3
-        self.se = nn.Sequential(
-            nn.Linear(total_dim, total_dim // 4, bias=False),
+        side_dim   = 2
+        total_dim  = side_dim * 3  # 6
+        self.se    = nn.Sequential(
+            nn.Linear(total_dim, max(total_dim // 2, 1), bias=False),  # inner=3
             nn.ReLU(inplace=True),
-            nn.Linear(total_dim // 4, total_dim, bias=False),
+            nn.Linear(max(total_dim // 2, 1), total_dim, bias=False),
             nn.Sigmoid()
         )
 
         # Classification head
+        # With such small combined_dim, a modest MLP width (e.g. 16) works well
         hidden = getattr(cfg, 'mlp_hidden_dim', 16)
         self.norm     = nn.LayerNorm(total_dim)
         self.dropout  = nn.Dropout(p=getattr(cfg, 'dropout', 0.5))
         self.classifier = nn.Sequential(
             nn.Linear(total_dim, hidden),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=0.3),
             nn.Linear(hidden, cfg.dataset.num_classes)
         )
 
         # Initialize new layers
-        for m in [self.lateral2, self.lateral3, self.lateral4, *self.classifier]:
+        for m in [self.lateral2, self.lateral3, self.lateral4] + list(self.classifier):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.Linear):
@@ -788,36 +789,31 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
-        # Backbone feature maps
         x0 = self.stem(x)
-        f1 = self.layer1(x0)
-        f2 = self.layer2(f1)
-        f3 = self.layer3(f2)
-        f4 = self.layer4(f3)
+        f1 = self.layer1(x0);
+        f2 = self.layer2(f1);
+        f3 = self.layer3(f2);
+        f4 = self.layer4(f3);
 
-        # Build FPN features (upsample lower-res to f2 size)
         p4 = self.lateral4(f4)
         p3 = self.lateral3(f3) + F.interpolate(p4, size=f3.shape[-2:], mode='nearest')
         p2 = self.lateral2(f2) + F.interpolate(p3, size=f2.shape[-2:], mode='nearest')
 
-        # Resize to 128x128 as required by Side-ViTs
         feat1 = F.interpolate(p2, size=(128,128), mode='bilinear', align_corners=False)
         feat2 = F.interpolate(p3, size=(128,128), mode='bilinear', align_corners=False)
-        feat3 = x  # original image input for sidevit_cnn
+        feat3 = x
 
-        # Side-ViT predictions
         out1 = self.sidevit1(feat1, K_value, Q_value)
         out2 = self.sidevit2(feat2, K_value, Q_value)
         out3 = self.sidevit_cnn(feat3, K_value, Q_value)
 
-        # Combine and apply SE attention
         combined = torch.cat([out1, out2, out3], dim=1)
-        attn = self.se(combined)
-        fused = combined * attn
+        attn     = self.se(combined)
+        fused    = combined * attn
 
-        # Classification head
         x = self.norm(fused)
         x = self.dropout(x)
         logits = self.classifier(x)
         return logits
+
 
