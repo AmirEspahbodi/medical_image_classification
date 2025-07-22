@@ -6,7 +6,7 @@ from torchvision import models
 from typing import Any, Tuple
 
 
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -208,7 +208,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
         side_vit2: nn.Module, # Assumed black box
         side_vit_cnn: nn.Module, # Assumed black box
         cfg: Any,
-        backbone_variant: str = 'coatnet_0',
+        backbone_variant: str = 'coatnet_0_224',
         pretrained_backbone: bool = True,
     ):
         super().__init__()
