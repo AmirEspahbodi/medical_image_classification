@@ -1,5 +1,5 @@
 name: chest_X_ray
-data_path: /content/dataset/splited_chest_xray
+data_path: /content/dataset/splited_chest_xray_80_10_10
 preload_path: /content/output/preload_chest_xray
 save_path: /content/output/labeled_chest_xray
 input_size: 512 # image resolution for the LPM
