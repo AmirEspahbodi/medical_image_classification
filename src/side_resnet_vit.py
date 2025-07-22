@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import timm
 from torchvision import models
 from typing import Any, Tuple
 
@@ -132,7 +133,7 @@ class EnhancedPreSideViT(nn.Module):
 
 
 # ---- Full Classifier Pipeline ----
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT3(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -302,4 +303,108 @@ class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
         return logits
 
 
+
+
+class FusionAdapter(nn.Module):
+    """
+    Lightweight adapter that fuses two feature maps via a 1x1 conv and self-attention.
+    """
+    def __init__(self, in_c1: int, in_c2: int, fusion_dim: int = 256, num_heads: int = 8):
+        super().__init__()
+        # Project concatenated features to fusion_dim
+        self.project = nn.Conv2d(in_c1 + in_c2, fusion_dim, kernel_size=1)
+        # Multi-head self-attention
+        self.mha = nn.MultiheadAttention(embed_dim=fusion_dim, num_heads=num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(fusion_dim)
+
+    def forward(self, feat1: torch.Tensor, feat2: torch.Tensor) -> torch.Tensor:
+        # feat1, feat2: [B, C, H, W]
+        # Align spatial dims
+        if feat1.shape[-2:] != feat2.shape[-2:]:
+            feat2 = F.interpolate(feat2, size=feat1.shape[-2:], mode='bilinear', align_corners=False)
+        # Concatenate and project
+        x = torch.cat([feat1, feat2], dim=1)           # [B, C1+C2, H, W]
+        x = self.project(x)                            # [B, fusion_dim, H, W]
+        B, C, H, W = x.shape
+        # Flatten to sequence
+        seq = x.flatten(2).transpose(1, 2)             # [B, H*W, fusion_dim]
+        # Self-attention
+        attn_out, _ = self.mha(seq, seq, seq)         # [B, H*W, fusion_dim]
+        # Residual + Norm
+        seq = self.norm(seq + attn_out)               # [B, H*W, fusion_dim]
+        # Reshape back
+        out = seq.transpose(1, 2).view(B, C, H, W)     # [B, fusion_dim, H, W]
+        return out
+
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+    def __init__(
+        self,
+        side_vit1: nn.Module,
+        side_vit2: nn.Module,
+        side_vit_cnn: nn.Module,
+        cfg: Any,
+        backbone: str = 'coatnet0_rw_224',
+        pretrained: bool = True
+    ):
+        super().__init__()
+        # 1) Load a hybrid CNN-Transformer backbone
+        #    Using timm's features_only to get intermediate feature maps
+        self.backbone = timm.create_model(backbone, pretrained=pretrained, features_only=True)
+        feat_dims = self.backbone.feature_info.channels()  # e.g. [64, 128, 320, 512]
+        c1, c2, c3, c4 = feat_dims
+
+        # 2) Freeze only the earliest stage(s)
+        for name, module in self.backbone.named_children():
+            if name in ['stem', 'stage1']:
+                for p in module.parameters(): p.requires_grad = False
+
+        # 3) Fusion adapters for linking feature maps
+        self.fuse23 = FusionAdapter(c2, c3, fusion_dim=c3)
+        self.fuse4  = FusionAdapter(c4, c4, fusion_dim=c4)
+
+        # 4) Project fused features to Side-ViT input channels
+        in_ch = cfg.dataset.image_channel_num
+        self.proj_sv1 = nn.Conv2d(c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
+
+        # 5) Side-ViT modules (black boxes)
+        self.sidevit1    = side_vit1
+        self.sidevit2    = side_vit2
+        self.sidevit_cnn = side_vit_cnn
+
+        # 6) Final classification head
+        total_dim = 6
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 16)
+        self.head = nn.Sequential(
+            nn.LayerNorm(total_dim),
+            nn.Linear(total_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_dim, cfg.dataset.num_classes)
+        )
+
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Extract multi-scale features
+        feats = self.backbone(x)   # list: [f1, f2, f3, f4]
+        f2, f3, f4 = feats[1], feats[2], feats[3]
+
+        # Fuse layer2 & layer3 for Side-ViT1
+        f23 = self.fuse23(f2, f3)  # [B, c3, H2, W2]
+        sv1_in = self.proj_sv1(f23)
+        sv1_in = F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # Fuse layer4 with itself (identity) for Side-ViT2
+        f4_fused = self.fuse4(f4, f4)
+        sv2_in = self.proj_sv2(f4_fused)
+        sv2_in = F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # Side-ViT predictions
+        out1 = self.sidevit1(sv1_in, K_value, Q_value)
+        out2 = self.sidevit2(sv2_in, K_value, Q_value)
+        out3 = self.sidevit_cnn(x,   K_value, Q_value)
+
+        # Concatenate and classify
+        combined = torch.cat([out1, out2, out3], dim=-1)
+        logits = self.head(combined)
+        return logits
 
