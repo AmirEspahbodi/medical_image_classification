@@ -760,7 +760,7 @@ class OverlapPatchEmbed(nn.Module):
 
 
 # ---- Enhanced Pre-Side-ViT Encoder ----
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class EnhancedPreSideViT(nn.Module):
     def __init__(
         self,
         cfg: Any,
@@ -834,7 +834,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
 
 
 # ---- Full Classifier Pipeline ----
-class RobustResNetSideViTClassifier(nn.Module):
+class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
