@@ -238,7 +238,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         side_vit_cnn,
         cfg: Any,
         backbone_variant: str = 'coatnet_0.untrained',
-        pretrained: bool = True,
+        pretrained_backbone: bool = True,
     ):
         super().__init__()
         self.cfg = cfg
