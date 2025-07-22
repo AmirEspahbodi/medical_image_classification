@@ -152,6 +152,9 @@ def setup_dataset(original_path, target_path, val_from_test_ratio=1.0, random_se
                     # If the image is for the training set, create and save an augmented version.
                     if split == 'train':
                         try:
+                            if class_name=="PNEUMONIA":
+                                if random.random()>0.5:
+                                    pass
                             # Use .convert('RGB') to handle grayscale or other modes consistently
                             with Image.open(source_file).convert('RGB') as img:
                                 augmented_img = apply_augmentation(img)
