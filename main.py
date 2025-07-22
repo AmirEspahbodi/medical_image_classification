@@ -11,7 +11,7 @@ from train import train, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.side_resnet_vit import (ResNetSideViTClassifier_MLP_CNNVIT)
+from src.side_resnet_vit import (CoAtNetSideViTClassifier_MLP_CNNVIT)
 
 
 @hydra.main(config_path="configs", config_name="config")
@@ -56,7 +56,7 @@ def main(cfg):
             case "resnet_sidevit_sv_cnn":
                 ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_SV_CNNVIT
             case "resnet_sidevit_mlp_cnn":
-                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_MLP_CNNVIT
+                ResNetSideViTClassifier_3RDVIT = CoAtNetSideViTClassifier_MLP_CNNVIT
             case "resnet_sidevit_fc_cnn":
                 ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_FC_CNNVIT
         resnet_side_vit_model = ResNetSideViTClassifier_3RDVIT(
