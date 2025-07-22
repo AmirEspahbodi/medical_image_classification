@@ -157,13 +157,14 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
-        # Extract hierarchical features (backbone frozen)
+def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # --- FIX: Resize input for the CoAtNet backbone ---
+        # The pretrained backbone expects 224x224 input.
+        x_backbone_input = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+
+        # Extract hierarchical features (backbone frozen) using the resized input
         with torch.no_grad():
-            # backbone(x) returns a list of features from each stage
-            features = self.backbone(x)
-            # We use the features from stages 2, 3, and 4, which correspond to
-            # indices 2, 3, and 4 in the list.
+            features = self.backbone(x_backbone_input)
             f2 = features[2]  # Output of stage 2
             f3 = features[3]  # Output of stage 3
             f4 = features[4]  # Output of stage 4
@@ -182,6 +183,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         # ----- Side-ViT predictions -----
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
+        # Use the ORIGINAL input 'x' for the parallel CNN-ViT branch
         vit_out3 = self.side_vit_cnn(x, K_value, Q_value)
 
         # Combine and classify
