@@ -350,7 +350,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         # --- 1) Hybrid CNN-Transformer backbone (features_only yields feature maps) ---
         if backbone == 'coatnet':
             # e.g. 'coatnet0_rw_224'
-            self.backbone = timm.create_model('coatnet0_rw_224', pretrained=pretrained, features_only=True)
+            self.backbone = timm.create_model('coatnet_0', pretrained=pretrained, features_only=True)
         elif backbone == 'fastvit':
             self.backbone = timm.create_model('fastvit_224', pretrained=pretrained, features_only=True)
         else:
