@@ -237,12 +237,12 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         side_vit2: FineGrainedPromptTuning,
         side_vit_cnn: FineGrainedPromptTuning,
         cfg: Any,
-        num_classes: int = 2,
-        backbone_variant: str = 'coatnet_0.untrained',
-        pretrained_backbone: bool = True,
+        backbonet: str = 'coatnet_0.untrained',
+        pretrained: bool = True,
     ):
         super().__init__()
         self.cfg = cfg
+        num_classes: int = 2
 
         # 1. Instantiate the CoAtNet Feature Extractor Backbone
         self.backbone = CoAtNetFeatureExtractor(backbone_variant, pretrained_backbone)
