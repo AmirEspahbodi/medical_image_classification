@@ -2,190 +2,173 @@ import os
 import shutil
 import random
 import logging
-from pathlib import Path
+from collections import defaultdict
 
-# Configure logging to show informational messages
+# --- Basic Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def create_directory_structure(destination_root, classes):
+def create_directory_structure(root_path, splits, classes):
     """
-    Creates the necessary directory structure (train, validation, test) for each class.
+    Creates the necessary directory structure for the new dataset.
+    e.g., .../target_dir/train/NORMAL, .../target_dir/validation/PNEUMONIA
     """
-    logger.info("Creating new directory structure...")
-    for split in ['train', 'validation', 'test']:
+    for split in splits:
         for class_name in classes:
-            folder_path = Path(destination_root) / split / class_name
-            # Create directories, including any necessary parent folders
-            folder_path.mkdir(parents=True, exist_ok=True)
+            folder_path = os.path.join(root_path, split, class_name)
+            os.makedirs(folder_path, exist_ok=True)
+    logger.info("Created all necessary directories in the target path.")
 
-def setup_dataset(original_path, target_path, split_ratios, random_seed=42):
+def rebalance_and_split_dataset(source_dir, target_dir, train_ratio, val_ratio, random_seed=42):
     """
-    Pools all images, shuffles them, and splits them into new train, validation,
-    and test sets based on the specified ratios.
+    Pools all images, shuffles, and splits them into train, validation, and test sets.
 
     Args:
-        original_path (str): Path to the original dataset with 'train' and 'test' folders.
-        target_path (str): Path where the reorganized dataset will be stored.
-        split_ratios (dict): Dictionary with ratios for 'train', 'validation', and 'test'.
-        random_seed (int): Seed for the random number generator for reproducibility.
+        source_dir (str): Path to the original dataset (e.g., '/content/dataset/chest_xray').
+        target_dir (str): Path to store the newly split dataset.
+        train_ratio (float): The proportion of data to allocate to the training set.
+        val_ratio (float): The proportion of data to allocate to the validation set.
+        random_seed (int): Seed for reproducibility.
     """
+    # Test ratio is implicitly calculated
+    test_ratio = 1.0 - train_ratio - val_ratio
+    if not (train_ratio + val_ratio + test_ratio == 1.0):
+        logger.error("Ratios must sum to 1.0")
+        return False
+
+    # Set random seed for reproducibility
     random.seed(random_seed)
-    original_path = Path(original_path)
-    target_path = Path(target_path)
 
-    # 1. Get class names from the original 'train' directory
+    # 1. Discover classes from the source 'train' directory
     try:
-        # Assumes the same class subdirectories exist in both 'train' and 'test'
-        classes = [d.name for d in (original_path / 'train').iterdir() if d.is_dir()]
-        logger.info(f"Detected classes: {classes}")
+        source_train_dir = os.path.join(source_dir, 'train')
+        classes = [d for d in os.listdir(source_train_dir) if os.path.isdir(os.path.join(source_train_dir, d))]
+        if not classes:
+            logger.error("No class directories found in source 'train' folder.")
+            return False
+        logger.info(f"Discovered classes: {classes}")
     except FileNotFoundError:
-        logger.error(f"Error: Could not find 'train' directory in {original_path}")
-        return False
-        
-    if not classes:
-        logger.error(f"Error: No class subdirectories found in {original_path / 'train'}")
+        logger.error(f"Source directory '{source_train_dir}' not found.")
         return False
 
-    # 2. Create the new directory structure in the target path
-    create_directory_structure(target_path, classes)
+    # 2. Create the target directory structure
+    splits = ['train', 'validation', 'test']
+    create_directory_structure(target_dir, splits, classes)
 
-    # 3. Process each class separately to maintain class balance
+    # 3. Pool, shuffle, and split files for each class
     for class_name in classes:
         logger.info(f"--- Processing class: {class_name} ---")
         
-        # --- Pool all image files for the current class from original train/test ---
-        all_files = []
-        train_dir = original_path / 'train' / class_name
-        test_dir = original_path / 'test' / class_name
+        all_image_paths = []
+        # Gather files from both original train and test folders
+        for split in ['train', 'test']:
+            class_folder = os.path.join(source_dir, split, class_name)
+            if os.path.exists(class_folder):
+                files = [os.path.join(class_folder, f) for f in os.listdir(class_folder) if os.path.isfile(os.path.join(class_folder, f))]
+                all_image_paths.extend(files)
         
-        if train_dir.exists():
-            all_files.extend(list(train_dir.glob('*.*'))) # Using glob to get file paths
-        if test_dir.exists():
-            all_files.extend(list(test_dir.glob('*.*')))
+        logger.info(f"Found {len(all_image_paths)} total images for class '{class_name}'.")
 
-        if not all_files:
-            logger.warning(f"No images found for class '{class_name}'. Skipping.")
-            continue
-            
-        logger.info(f"Found {len(all_files)} total images for class '{class_name}'.")
+        # Shuffle the pooled list of images
+        random.shuffle(all_image_paths)
 
-        # --- Shuffle the pooled list of files randomly ---
-        random.shuffle(all_files)
+        # Calculate split indices
+        total_files = len(all_image_paths)
+        train_end = int(total_files * train_ratio)
+        val_end = train_end + int(total_files * val_ratio)
+
+        # Slice the list into three sets
+        train_set = all_image_paths[:train_end]
+        val_set = all_image_paths[train_end:val_end]
+        test_set = all_image_paths[val_end:]
         
-        # --- Calculate split points based on ratios ---
-        total_count = len(all_files)
-        train_count = int(total_count * split_ratios['train'])
-        val_count = int(total_count * split_ratios['validation'])
-        
-        # Define the slices for each set
-        train_files = all_files[:train_count]
-        validation_files = all_files[train_count : train_count + val_count]
-        test_files = all_files[train_count + val_count:]
-        
-        # --- Create a map for easy file copying ---
-        split_map = {
-            'train': train_files,
-            'validation': validation_files,
-            'test': test_files
+        # Create a dictionary to easily iterate and copy files
+        sets_to_copy = {
+            'train': train_set,
+            'validation': val_set,
+            'test': test_set
         }
 
-        # --- Copy files to their new destination folders ---
-        for split_name, files_to_copy in split_map.items():
-            destination_dir = target_path / split_name / class_name
-            logger.info(f"Copying {len(files_to_copy)} files to {destination_dir}")
-            for src_path in files_to_copy:
+        # 4. Copy files to their new destination
+        for split_name, file_list in sets_to_copy.items():
+            destination_folder = os.path.join(target_dir, split_name, class_name)
+            for src_path in file_list:
                 try:
-                    # copy2 preserves metadata
-                    shutil.copy2(src_path, destination_dir / src_path.name)
+                    shutil.copy2(src_path, destination_folder)
                 except Exception as e:
-                    logger.error(f"Failed to copy {src_path} to {destination_dir}: {e}")
-    
-    logger.info("✅ Dataset splitting and copying completed successfully.")
+                    logger.error(f"Failed to copy {src_path} to {destination_folder}: {e}")
+            logger.info(f"Copied {len(file_list)} files to {destination_folder}")
+
     return True
 
 def count_files_in_dataset(dataset_path):
-    """
-    Counts and prints the number of files in each subdirectory of the dataset.
-    """
-    dataset_path = Path(dataset_path)
-    if not dataset_path.exists():
-        print(f"Error: Dataset path '{dataset_path}' does not exist.")
-        return
-        
+    """Prints statistics about the dataset splits and classes."""
+    overall_total = 0
     try:
-        classes = sorted([d.name for d in (dataset_path / 'train').iterdir() if d.is_dir()])
+        splits = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
+        for split in sorted(splits):
+            split_path = os.path.join(dataset_path, split)
+            split_total = 0
+            print(f"\n{split.upper()} SET:")
+            
+            classes = sorted([d for d in os.listdir(split_path) if os.path.isdir(os.path.join(split_path, d))])
+            for class_name in classes:
+                class_dir = os.path.join(split_path, class_name)
+                file_count = len([f for f in os.listdir(class_dir) if os.path.isfile(os.path.join(class_dir, f))])
+                split_total += file_count
+                print(f"  {class_name}: {file_count} files")
+            
+            print(f"  TOTAL: {split_total} files")
+            overall_total += split_total
+        
+        print(f"\n----------------------------------")
+        print(f"OVERALL DATASET TOTAL: {overall_total} files")
+
     except FileNotFoundError:
-        print(f"Error: Could not find 'train' directory in {dataset_path}.")
-        return
-
-    grand_total = 0
-    print("\n" + "="*40)
-    print("      FINAL DATASET FILE COUNT")
-    print("="*40)
-    for split in ['train', 'validation', 'test']:
-        split_total = 0
-        print(f"\n📁 {split.upper()} SET:")
-        split_path = dataset_path / split
-        
-        for class_name in classes:
-            class_dir = split_path / class_name
-            file_count = len([f for f in class_dir.iterdir() if f.is_file()]) if class_dir.exists() else 0
-            split_total += file_count
-            print(f"  - {class_name}: {file_count} files")
-        
-        print(f"  ------------------\n  TOTAL: {split_total} files")
-        grand_total += split_total
-    
-    print("\n" + "="*40)
-    print(f"🎉 GRAND TOTAL IN ALL SPLITS: {grand_total} files")
-    print("="*40)
-
+        print(f"Error: Directory not found at {dataset_path}")
+    except Exception as e:
+        print(f"An error occurred while counting files: {str(e)}")
 
 def main():
-    """Main function to configure and run the dataset splitting process."""
-    # --- 1. DEFINE YOUR PATHS HERE ---
-    # Path to your original dataset containing 'train' and 'test' folders
-    original_dataset = '/content/dataset/chest_xray' 
-    # Path where the new, split dataset will be created
-    target_dataset = '/content/dataset/splited_chest_xray'
+    # --- User-defined Parameters ---
     
-    # --- 2. DEFINE YOUR SPLIT RATIOS HERE ---
-    # Ratios must sum to 1.0
-    split_ratios = {
-        'train': 0.10,      # 10%
-        'validation': 0.10, # 10%
-        'test': 0.80        # 80%
-    }
+    # Original dataset with 'train' and 'test' folders
+    original_dataset = '/content/dataset/chest_xray'
     
-    # --- 3. DEFINE YOUR RANDOM SEED ---
-    random_seed = 42
+    # Directory where the new 80/10/10 split will be saved
+    target_dataset = '/content/dataset/splited_chest_xray_80_10_10'
+
+    # Define the desired split ratios
+    TRAIN_RATIO = 0.8
+    VAL_RATIO = 0.1
+    # TEST_RATIO is automatically calculated as 1.0 - TRAIN_RATIO - VAL_RATIO
     
-    # --- SCRIPT EXECUTION ---
-    print("--- Starting Dataset Re-splitting ---")
-    print(f"➡️  Original Location: {original_dataset}")
-    print(f"⬅️  Target Location: {target_dataset}")
-    print(f"📊 Desired Split -> Train: {split_ratios['train']:.0%}, Validation: {split_ratios['validation']:.0%}, Test: {split_ratios['test']:.0%}")
+    # Random seed for shuffling, ensuring the split is the same every time
+    RANDOM_SEED = 42
     
-    # Safety check to ensure ratios are correct
-    if not sum(split_ratios.values()) == 1.0:
-        logger.error(f"Split ratios must sum to 1.0, but they sum to {sum(split_ratios.values())}")
-        return
-        
-    # Optional: Remove the target directory if it exists for a clean run
+    # --- Execution ---
+    
+    # Clean up target directory if it exists, to ensure a fresh start
     if os.path.exists(target_dataset):
-        print(f"⚠️ Target directory '{target_dataset}' already exists. Removing it now.")
+        logger.warning(f"Target directory '{target_dataset}' already exists. Removing it for a fresh split.")
         shutil.rmtree(target_dataset)
         
-    # Run the main setup function
-    success = setup_dataset(original_dataset, target_dataset, split_ratios, random_seed)
+    print(f"Starting dataset split from '{original_dataset}' to '{target_dataset}'...")
+    
+    success = rebalance_and_split_dataset(
+        source_dir=original_dataset,
+        target_dir=target_dataset,
+        train_ratio=TRAIN_RATIO,
+        val_ratio=VAL_RATIO,
+        random_seed=RANDOM_SEED
+    )
     
     if success:
-        # Print the final counts to verify the split
+        print("\n✅ Dataset split and reorganization complete.")
+        print("Final file counts in the new directory:")
         count_files_in_dataset(target_dataset)
     else:
-        print("\n--- ❌ Dataset Splitting Failed ---")
-        print("Please check the log messages above for specific errors.")
+        print("\n❌ Dataset setup failed. Please check the log messages for errors.")
 
 if __name__ == "__main__":
     main()
