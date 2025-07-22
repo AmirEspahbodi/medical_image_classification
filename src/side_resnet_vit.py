@@ -157,7 +157,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
         # --- FIX: Resize input for the CoAtNet backbone ---
         # The pretrained backbone expects 224x224 input.
         x_backbone_input = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
