@@ -758,7 +758,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
 
         # Channel attention on combined ViT outputs
         # Assuming each side_vit returns vector of dim side_dim
-        side_dim = cfg.model.side_output_dim
+        side_dim = 2
         total_dim = side_dim * 3
         self.se = nn.Sequential(
             nn.Linear(total_dim, total_dim // 4, bias=False),
@@ -768,13 +768,13 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         )
 
         # Classification head
-        hidden = getattr(cfg, 'mlp_hidden_dim', 256)
+        hidden = getattr(cfg, 'mlp_hidden_dim', 16)
         self.norm     = nn.LayerNorm(total_dim)
         self.dropout  = nn.Dropout(p=getattr(cfg, 'dropout', 0.5))
         self.classifier = nn.Sequential(
             nn.Linear(total_dim, hidden),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.3),
+            nn.Dropout(p=0.2),
             nn.Linear(hidden, cfg.dataset.num_classes)
         )
 
