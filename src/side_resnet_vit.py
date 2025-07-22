@@ -113,7 +113,8 @@ import torch.nn.functional as F
 from typing import Any
 import timm
 
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+
+class ResNetSideViTClassifier_MLP_CNNVIT_old(nn.Module):
     def __init__(
         self,
         side_vit1,
@@ -124,32 +125,31 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     ):
         super().__init__()
         # Load CoAtNet backbone using timm
-        # Note: 'coatnet_o_rw_224' in the prompt is likely a typo for 'coatnet_0_rw_224'
         self.backbone = timm.create_model(
             'coatnet_0_rw_224',
             pretrained=pretrained,
-            features_only=True # Returns a list of feature maps
+            features_only=True
         )
-        
-        # Output channels for CoAtNet-0 stages 2, 3, and 4
-        # features[2] -> s2_out, features[3] -> s3_out, features[4] -> s4_out
-        c2, c3, c4 = 320, 512, 768
+
+        # --- FIX: Use the correct channel dimensions for coatnet_0_rw_224 ---
+        c2, c3, c4 = 192, 384, 768
 
         # Freeze backbone
         for param in self.backbone.parameters():
             param.requires_grad = False
 
-        # Projection from block2+3 and block4 to Side-ViT inputs
+        # Projection layers now correctly initialized
+        # proj_sv1 input: c2 + c3 = 192 + 384 = 576 channels
         in_ch = cfg.dataset.image_channel_num
-        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1) # 320 + 512 = 832
-        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)      # 768
+        self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1)
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1)
 
         # Side-ViT classifiers
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # MLP head with dropout for regularization
+        # MLP head
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
             nn.Linear(6, hidden_dim),
@@ -158,33 +158,30 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
-        # --- FIX: Resize input for the CoAtNet backbone ---
-        # The pretrained backbone expects 224x224 input.
+        # Resize input for the CoAtNet backbone to its expected 224x224 size
         x_backbone_input = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
 
-        # Extract hierarchical features (backbone frozen) using the resized input
+        # Extract hierarchical features (backbone frozen)
         with torch.no_grad():
             features = self.backbone(x_backbone_input)
-            f2 = features[2]  # Output of stage 2
-            f3 = features[3]  # Output of stage 3
-            f4 = features[4]  # Output of stage 4
+            f2 = features[2]  # Output of stage 2 (192 channels)
+            f3 = features[3]  # Output of stage 3 (384 channels)
+            f4 = features[4]  # Output of stage 4 (768 channels)
 
-        # ----- Build features for Side-ViT-1 -----
-        # Upsample f3 to match f2's spatial dimensions
+        # Build features for Side-ViT-1
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-        feats23 = torch.cat([f2, f3_up], dim=1)
-        feats1 = self.proj_sv1(feats23)
+        feats23 = torch.cat([f2, f3_up], dim=1) # Shape: [batch, 576, H, W]
+        feats1 = self.proj_sv1(feats23) # proj_sv1 now correctly expects 576 channels
         feats1 = F.interpolate(feats1, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # ----- Build features for Side-ViT-2 -----
+        # Build features for Side-ViT-2
         feats2 = self.proj_sv2(f4)
         feats2 = F.interpolate(feats2, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # ----- Side-ViT predictions -----
+        # Side-ViT predictions
         vit_out1 = self.sidevit1(feats1, K_value, Q_value)
         vit_out2 = self.sidevit2(feats2, K_value, Q_value)
-        # Use the ORIGINAL input 'x' for the parallel CNN-ViT branch
-        vit_out3 = self.side_vit_cnn(x, K_value, Q_value)
+        vit_out3 = self.side_vit_cnn(x, K_value, Q_value) # Use original 'x' here
 
         # Combine and classify
         combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
