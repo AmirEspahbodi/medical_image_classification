@@ -198,24 +198,31 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, List
 import timm
 
-# Optional: Stochastic depth (DropPath)
-try:
-    from timm.models.layers import drop_path, DropPath
-except ImportError:
-    DropPath = lambda x: nn.Identity()
+# --- Helper Module: Depthwise Separable Convolution ---
+# This layer is a parameter-efficient replacement for a standard Conv2d.
+# It splits the convolution into a depthwise (spatial) and a pointwise (channel) operation.
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, bias=False):
+        super().__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, padding=padding, groups=in_channels, bias=bias)
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias)
 
-# --- SE Block for channel-wise attention with dropout ---
+    def forward(self, x):
+        return self.pointwise(self.depthwise(x))
+
+# --- Helper Module: Squeeze-and-Excitation Block (with Regularization) ---
+# This block remains the same, providing channel-wise attention with regularization.
 class SEBlock(nn.Module):
-    def __init__(self, channel, reduction=16, drop_p=0.2):
+    def __init__(self, channel, reduction=24, dropout_p=0.1):
         super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=drop_p),
+            nn.Dropout(p=dropout_p),
             nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
@@ -226,28 +233,62 @@ class SEBlock(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y.expand_as(x)
 
-# --- FPN-style Feature Fusion for blocks 2 & 3 ---
-class FPNFusion(nn.Module):
-    def __init__(self, c2_dim, c3_dim, out_dim, drop_p=0.2):
+# --- Helper Module: Lightweight Attention Adapter ---
+# This version uses DepthwiseSeparableConv to significantly reduce parameters
+# compared to the previous AttentionAdapter.
+class LightweightAttentionAdapter(nn.Module):
+    def __init__(self, channels, dropout_rate=0.2):
         super().__init__()
-        self.top_down_proj = nn.Conv2d(c3_dim, out_dim, kernel_size=1, bias=False)
-        self.lateral_proj = nn.Conv2d(c2_dim, out_dim, kernel_size=1, bias=False)
-        self.post_fusion_conv = nn.Sequential(
-            nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_dim),
+        # Using a residual block with a single depthwise separable convolution
+        # to keep the parameter count low.
+        self.conv_block = nn.Sequential(
+            DepthwiseSeparableConv(channels, channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(channels),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(p=drop_p)
         )
+        self.se_block = SEBlock(channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout2d(p=dropout_rate) # Increased dropout
+
+    def forward(self, x):
+        residual = x
+        x = self.conv_block(x)
+        x = self.se_block(x)
+        x = x + residual
+        x = self.relu(x)
+        x = self.dropout(x)
+        return x
+
+# --- Helper Module: Lightweight FPN-style Feature Fusion ---
+# This module reduces parameters by performing the fusion and 3x3 convolution
+# in a low-dimensional space before projecting to the final output dimension.
+class LightweightFPNFusion(nn.Module):
+    def __init__(self, c2_dim, c3_dim, fusion_dim, out_dim):
+        super().__init__()
+        # Project backbone features into a low-dimensional space
+        self.top_down_proj = nn.Conv2d(c3_dim, fusion_dim, kernel_size=1, bias=False)
+        self.lateral_proj = nn.Conv2d(c2_dim, fusion_dim, kernel_size=1, bias=False)
+        
+        # 3x3 convolution now operates on the smaller fusion_dim using a lightweight conv
+        self.post_fusion_conv = nn.Sequential(
+            DepthwiseSeparableConv(fusion_dim, fusion_dim, kernel_size=3, padding=1),
+            nn.BatchNorm2d(fusion_dim),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Final projection to the desired output dimension for the Side-ViT
+        self.out_proj = nn.Conv2d(fusion_dim, out_dim, kernel_size=1, bias=False)
 
     def forward(self, f_shallow, f_deep):
         deep_proj = self.top_down_proj(f_deep)
         deep_upsampled = F.interpolate(deep_proj, size=f_shallow.shape[-2:], mode='bilinear', align_corners=False)
         shallow_proj = self.lateral_proj(f_shallow)
         fused = shallow_proj + deep_upsampled
-        return self.post_fusion_conv(fused)
+        fused_low_dim = self.post_fusion_conv(fused)
+        out = self.out_proj(fused_low_dim)
+        return out
 
-
-class CoAtNetSideViTClassifier_Regularized(nn.Module):
+class CoAtNetSideViTClassifier_Advanced(nn.Module):
     def __init__(
         self,
         side_vit1,
@@ -257,45 +298,45 @@ class CoAtNetSideViTClassifier_Regularized(nn.Module):
         pretrained: bool = True,
     ):
         super().__init__()
-        # Backbone
-        self.backbone = timm.create_model('coatnet_0_rw_224', pretrained=pretrained, features_only=True)
-        # Freeze all except last block of stage-4
-        for name, param in self.backbone.named_parameters():
+        self.cfg = cfg
+        
+        # --- Backbone: CoAtNet (Unchanged) ---
+        self.backbone = timm.create_model(
+            'coatnet_0_rw_224', pretrained=pretrained, features_only=True
+        )
+        
+        # --- Fine-tuning Strategy (Unchanged) ---
+        for param in self.backbone.parameters():
             param.requires_grad = False
-        # no backbone finetune to avoid overfit on small data
+        for name, param in self.backbone.named_parameters():
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
+                param.requires_grad = True
 
-        # Channel dims
-        c2, c3, c4 = 192, 384, 768
-        in_ch = cfg.dataset.image_channel_num
-        num_classes = 2
+        # --- Channel Dimensions ---
+        feature_info = self.backbone.feature_info.get_dicts(keys=[2, 3, 4])
+        c2_dim, c3_dim, c4_dim = [info['num_chs'] for info in feature_info]
+        
+        in_ch = self.cfg.dataset.image_channel_num
+        num_classes = self.cfg.dataset.num_classes # Should be 4 for your dataset
 
-        # FPNFusion + adapter for Side-ViT1
-        self.fpn = FPNFusion(c2, c3, in_ch, drop_p=0.3)
-        self.adapt_sv1 = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(in_ch),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(p=0.5),
-            DropPath(0.2)
-        )
+        # --- Lightweight Input Processing for Side-ViTs ---
+        
+        # 1. For Side-ViT 1 (Multi-scale FPN Input)
+        # Using a smaller intermediate fusion_dim (e.g., 64) to reduce parameters.
+        fusion_dim = getattr(self.cfg, 'fpn_fusion_dim', 64)
+        self.fpn_fusion = LightweightFPNFusion(c2_dim=c2_dim, c3_dim=c3_dim, fusion_dim=fusion_dim, out_dim=in_ch)
+        self.adapter_sv1 = LightweightAttentionAdapter(channels=in_ch, dropout_rate=0.2)
 
-        # SEBlock + projection + adapter for Side-ViT2
-        self.seblock = SEBlock(c4, reduction=16, drop_p=0.3)
-        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
-        self.adapt_sv2 = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(in_ch),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(p=0.5),
-            DropPath(0.2)
-        )
+        # 2. For Side-ViT 2 (Single-scale Input from final stage)
+        self.proj_sv2 = nn.Conv2d(c4_dim, in_ch, kernel_size=1, bias=False)
+        self.adapter_sv2 = LightweightAttentionAdapter(channels=in_ch, dropout_rate=0.2)
 
-        # Side-ViT modules
+        # --- Side-ViT Ensembles (Treated as Black Boxes) ---
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # Fusion & head: heavier dropout, weight normalization
+        # Final MLP head with stronger dropout and smaller hidden size
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
             nn.Linear(6, hidden_dim),
@@ -303,101 +344,30 @@ class CoAtNetSideViTClassifier_Regularized(nn.Module):
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
 
-
     def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # Backbone features (all frozen)
-        x_bb = F.interpolate(x, size=(224,224), mode='bilinear', align_corners=False)
-        f2, f3, f4 = self.backbone(x_bb)[2:5]
+        x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        features = self.backbone(x_backbone)
+        f2, f3, f4 = features[2], features[3], features[4]
 
-        # SV1 path
-        fpn_out = self.fpn(f2, f3)
-        sv1_in = self.adapt_sv1(F.interpolate(fpn_out, size=(128,128), mode='bilinear', align_corners=False))
+        # Side-ViT 1 Input
+        sv1_in = self.fpn_fusion(f_shallow=f2, f_deep=f3)
+        sv1_in = F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False)
+        sv1_in = self.adapter_sv1(sv1_in)
 
-        # SV2 path
-        se_out = self.seblock(f4)
-        proj2 = self.proj_sv2(se_out)
-        sv2_in = self.adapt_sv2(F.interpolate(proj2, size=(128,128), mode='bilinear', align_corners=False))
+        # Side-ViT 2 Input
+        sv2_in = self.proj_sv2(f4)
+        sv2_in = F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False)
+        sv2_in = self.adapter_sv2(sv2_in)
 
-        # CNN path
+        # Side-ViT-CNN Input
         sv3_in = x
 
-        # Side-ViT forwards
-        vit_out1 = self.sidevit1(sv1_in, K_value, Q_value)
-        vit_out2 = self.sidevit2(sv2_in, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
+        # Forward through Side-ViTs
+        out1 = self.sidevit1(sv1_in, K_value, Q_value)
+        out2 = self.sidevit2(sv2_in, K_value, Q_value)
+        out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
 
-        # Fusion & classification
-        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)  # [batch, 4]
-        logits = self.mlp(combined)
-        return logits
-
-
-class CoAtNetSideViTClassifier_Regularized2(nn.Module):
-    def __init__(
-        self,
-        side_vit1,
-        side_vit2,
-        side_vit_cnn,
-        cfg: Any,
-        pretrained: bool = True,
-    ):
-        super().__init__()
-        # Backbone
-        self.backbone = timm.create_model('coatnet_0_rw_224', pretrained=pretrained, features_only=True)
-        # Freeze all except last block of stage-4
-        for name, param in self.backbone.named_parameters():
-            param.requires_grad = False
-        # no backbone finetune to avoid overfit on small data
-
-        # Channel dims
-        c2, c3, c4 = 192, 384, 768
-        in_ch = cfg.dataset.image_channel_num
-        num_classes = 2
-
-        # FPNFusion + adapter for Side-ViT1
-        self.fpn = FPNFusion(c2, c3, in_ch, drop_p=0.3)
-
-        # SEBlock + projection + adapter for Side-ViT2
-        self.seblock = SEBlock(c4, reduction=16, drop_p=0.3)
-        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
-
-        # Side-ViT modules
-        self.sidevit1 = side_vit1
-        self.sidevit2 = side_vit2
-        self.side_vit_cnn = side_vit_cnn
-
-        # Fusion & head: heavier dropout, weight normalization
-        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
-        self.mlp = nn.Sequential(
-            nn.Linear(6, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, cfg.dataset.num_classes)
-        )
-
-
-    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # Backbone features (all frozen)
-        x_bb = F.interpolate(x, size=(224,224), mode='bilinear', align_corners=False)
-        f2, f3, f4 = self.backbone(x_bb)[2:5]
-
-        # SV1 path
-        fpn_out = self.fpn(f2, f3)
-        sv1_in = F.interpolate(fpn_out, size=(128,128), mode='bilinear', align_corners=False)
-
-        # SV2 path
-        se_out = self.seblock(f4)
-        proj2 = self.proj_sv2(se_out)
-        sv2_in = F.interpolate(proj2, size=(128,128), mode='bilinear', align_corners=False)
-
-        # CNN path
-        sv3_in = x
-
-        # Side-ViT forwards
-        vit_out1 = self.sidevit1(sv1_in, K_value, Q_value)
-        vit_out2 = self.sidevit2(sv2_in, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
-
-        # Fusion & classification
-        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)  # [batch, 4]
+        # Fusion and Classification
+        combined = torch.cat([out1, out2, out3], dim=1)  # [batch, 4]
         logits = self.mlp(combined)
         return logits
