@@ -49,7 +49,7 @@ def main(cfg):
     del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    if cfg.network.model in ["resnet_sidevit_sv_cnn", "resnet_sidevit_mlp_cnn", "resnet_sidevit_fc_cnn"]:
+    if cfg.network.model in ["coatnet_3sidevit_1", "coatnet_3sidevit_2", "coatnet_3sidevit_3"]:
         frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
         del frozen_encoder3
         match cfg.network.model:
