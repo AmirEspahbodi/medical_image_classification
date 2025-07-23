@@ -11,41 +11,59 @@ from PIL import Image, ImageEnhance, ImageOps
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+import random
+import numpy as np
+from PIL import Image, ImageOps, ImageEnhance
+
 def apply_medical_augmentation(image):
+    """
+    Apply 1 to 4 random augmentation techniques sequentially on the input image.
+    Techniques include: rotate, scale, contrast adjustment, and Poisson noise.
+    """
     techniques = ['rotate', 'scale', 'contrast', 'noise']
-    technique = random.choice(techniques)
+    # Choose between 1 and 4 techniques (allowing repeats)
+    selected = random.choices(techniques, k=random.randint(1, 4))
 
-    if technique == 'rotate':
-        angle = random.uniform(-10, 10)
-        rotated = image.rotate(angle, resample=Image.BICUBIC, expand=True)
-        return ImageOps.fit(rotated, image.size, method=Image.BICUBIC, centering=(0.5, 0.5))
+    augmented = image
+    for tech in selected:
+        if tech == 'rotate':
+            angle = random.uniform(-10, 10)
+            rotated = augmented.rotate(angle, resample=Image.BICUBIC, expand=True)
+            # Fit back to original size
+            augmented = ImageOps.fit(rotated, image.size, method=Image.BICUBIC, centering=(0.5, 0.5))
 
-    elif technique == 'scale':
-        scale_factor = random.uniform(0.9, 1.1)
-        w, h = image.size
-        new_w, new_h = int(w * scale_factor), int(h * scale_factor)
-        scaled = image.resize((new_w, new_h), resample=Image.BICUBIC)
-        pad_w = max(0, w - new_w)
-        pad_h = max(0, h - new_h)
-        padded = ImageOps.expand(
-            scaled,
-            border=(pad_w // 2, pad_h // 2),
-            fill=None
-        )
-        return padded.crop((0, 0, w, h))
+        elif tech == 'scale':
+            scale_factor = random.uniform(0.9, 1.1)
+            w, h = augmented.size
+            new_w, new_h = int(w * scale_factor), int(h * scale_factor)
+            scaled = augmented.resize((new_w, new_h), resample=Image.BICUBIC)
+            # Pad or crop back to original
+            pad_w = max(0, w - new_w)
+            pad_h = max(0, h - new_h)
+            padded = ImageOps.expand(
+                scaled,
+                border=(pad_w // 2, pad_h // 2),
+                fill=None
+            )
+            augmented = padded.crop((0, 0, w, h))
 
-    elif technique == 'contrast':
-        factor = random.uniform(0.8, 1.2)
-        enhancer = ImageEnhance.Contrast(image)
-        return enhancer.enhance(factor)
+        elif tech == 'contrast':
+            factor = random.uniform(0.8, 1.2)
+            enhancer = ImageEnhance.Contrast(augmented)
+            augmented = enhancer.enhance(factor)
 
-    elif technique == 'noise':
-        arr = np.array(image).astype(np.float32) / 255.0
-        noisy = np.random.poisson(arr * 255.0) / 255.0
-        noisy_img = (np.clip(noisy, 0, 1) * 255).astype(np.uint8)
-        return Image.fromarray(noisy_img)
+        elif tech == 'noise':
+            arr = np.array(augmented).astype(np.float32) / 255.0
+            noisy = np.random.poisson(arr * 255.0) / 255.0
+            noisy_img = (np.clip(noisy, 0, 1) * 255).astype(np.uint8)
+            augmented = Image.fromarray(noisy_img)
 
-    raise RuntimeError("augmentation failed!")
+        else:
+            # Should not happen
+            raise RuntimeError(f"Unknown augmentation: {tech}")
+
+    return augmented
+
 
 
 def create_directory_structure(destination_root, classes):
