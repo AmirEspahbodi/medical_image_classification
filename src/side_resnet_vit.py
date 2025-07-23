@@ -331,3 +331,73 @@ class CoAtNetSideViTClassifier_Regularized(nn.Module):
         logits = self.mlp(combined)
         return logits
 
+
+class CoAtNetSideViTClassifier_Regularized2(nn.Module):
+    def __init__(
+        self,
+        side_vit1,
+        side_vit2,
+        side_vit_cnn,
+        cfg: Any,
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Backbone
+        self.backbone = timm.create_model('coatnet_0_rw_224', pretrained=pretrained, features_only=True)
+        # Freeze all except last block of stage-4
+        for name, param in self.backbone.named_parameters():
+            param.requires_grad = False
+        # no backbone finetune to avoid overfit on small data
+
+        # Channel dims
+        c2, c3, c4 = 192, 384, 768
+        in_ch = cfg.dataset.image_channel_num
+        num_classes = 2
+
+        # FPNFusion + adapter for Side-ViT1
+        self.fpn = FPNFusion(c2, c3, in_ch, drop_p=0.3)
+
+        # SEBlock + projection + adapter for Side-ViT2
+        self.seblock = SEBlock(c4, reduction=16, drop_p=0.3)
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
+
+        # Side-ViT modules
+        self.sidevit1 = side_vit1
+        self.sidevit2 = side_vit2
+        self.side_vit_cnn = side_vit_cnn
+
+        # Fusion & head: heavier dropout, weight normalization
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
+        self.mlp = nn.Sequential(
+            nn.Linear(6, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, cfg.dataset.num_classes)
+        )
+
+
+    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
+        # Backbone features (all frozen)
+        x_bb = F.interpolate(x, size=(224,224), mode='bilinear', align_corners=False)
+        f2, f3, f4 = self.backbone(x_bb)[2:5]
+
+        # SV1 path
+        fpn_out = self.fpn(f2, f3)
+        sv1_in = F.interpolate(fpn_out, size=(128,128), mode='bilinear', align_corners=False)
+
+        # SV2 path
+        se_out = self.seblock(f4)
+        proj2 = self.proj_sv2(se_out)
+        sv2_in = F.interpolate(proj2, size=(128,128), mode='bilinear', align_corners=False)
+
+        # CNN path
+        sv3_in = x
+
+        # Side-ViT forwards
+        vit_out1 = self.sidevit1(sv1_in, K_value, Q_value)
+        vit_out2 = self.sidevit2(sv2_in, K_value, Q_value)
+        vit_out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
+
+        # Fusion & classification
+        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)  # [batch, 4]
+        logits = self.mlp(combined)
+        return logits
