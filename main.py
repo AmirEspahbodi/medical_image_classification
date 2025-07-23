@@ -57,9 +57,9 @@ def main(cfg):
             EnhancedSideViTClassifier = CoAtNetSideViTClassifier_MLP_CNNVIT
         case "coatnet_2":
             EnhancedSideViTClassifier = CoAtNetSideViTClassifier_Advanced
-        case "resnet_fc_1":
+        case "resnet_1":
             EnhancedSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
-        case "resnet_mlp_1":
+        case "resnet_2":
             EnhancedSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
         case _:
             raise RuntimeError()
