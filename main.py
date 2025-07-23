@@ -50,40 +50,28 @@ def main(cfg):
     del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    if cfg.network.model in ["coatnet_3sidevit_1", "coatnet_3sidevit_2", "coatnet_3sidevit_3"]:
-        frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
-        del frozen_encoder3
-        match cfg.network.model:
-            case "coatnet_3sidevit_1":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
-            case "coatnet_3sidevit_2":
-                ResNetSideViTClassifier = CoAtNetSideViTClassifier_Advanced
-            case "coatnet_3sidevit_3":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
-        resnet_side_vit_model = ResNetSideViTClassifier(
-            side_vit1=side_vit_model1,
-            side_vit2=side_vit_model2,
-            side_vit_cnn=side_vit_model_cnn,
-            cfg=cfg,
-            # pretrained=True,
-        ).to(cfg.base.device)
-        
-    else:
-        match cfg.network.model:
-            case "resnet_sidevit_fc_cnn":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
-            case "resnet_sidevit_mlp_cnn":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
-            case _:
-                raise RuntimeError()
-            
-        resnet_side_vit_model = ResNetSideViTClassifier(
-            side_vit1=side_vit_model1,
-            side_vit2=side_vit_model2,
-            cfg=cfg,
-            resnet_variant='resnet50',
-            pretrained=True,
-        ).to(cfg.base.device)
+    frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
+    del frozen_encoder3
+    match cfg.network.model:
+        case "coatnet_3sidevit_1":
+            EnhancedSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
+        case "coatnet_3sidevit_2":
+            EnhancedSideViTClassifier = CoAtNetSideViTClassifier_Advanced
+        case "coatnet_3sidevit_3":
+            EnhancedSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
+        case "resnet_sidevit_fc_cnn":
+            EnhancedSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
+        case "resnet_sidevit_mlp_cnn":
+            EnhancedSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
+        case _:
+            raise RuntimeError()
+    resnet_side_vit_model = EnhancedSideViTClassifier(
+        side_vit1=side_vit_model1,
+        side_vit2=side_vit_model2,
+        side_vit_cnn=side_vit_model_cnn,
+        cfg=cfg,
+        # pretrained=True,
+    ).to(cfg.base.device)
 
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
