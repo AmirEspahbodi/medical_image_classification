@@ -55,12 +55,12 @@ def main(cfg):
         del frozen_encoder3
         match cfg.network.model:
             case "coatnet_3sidevit_1":
-                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_MLP_CNNVIT
+                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
             case "coatnet_3sidevit_2":
-                ResNetSideViTClassifier_3RDVIT = CoAtNetSideViTClassifier_Advanced
+                ResNetSideViTClassifier = CoAtNetSideViTClassifier_Advanced
             case "coatnet_3sidevit_3":
-                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_FC_CNNVIT
-        resnet_side_vit_model = ResNetSideViTClassifier_3RDVIT(
+                ResNetSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
+        resnet_side_vit_model = ResNetSideViTClassifier(
             side_vit1=side_vit_model1,
             side_vit2=side_vit_model2,
             side_vit_cnn=side_vit_model_cnn,
@@ -70,16 +70,10 @@ def main(cfg):
         
     else:
         match cfg.network.model:
-            case "resnet_sidevit_ffn_fc":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_FC
-            case "resnet_sidevit_ffn_mlp":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_FFN_MLP
-            case "resnet_sidevit_fc":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_FC
-            case "resnet_sidevit_mlp":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP
-            case "resnet_sidevit_sv":
-                ResNetSideViTClassifier = ResNetSideViTClassifier_SV
+            case "resnet_sidevit_fc_cnn":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_FC_CNNVIT
+            case "resnet_sidevit_mlp_cnn":
+                ResNetSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
             case _:
                 raise RuntimeError()
             
