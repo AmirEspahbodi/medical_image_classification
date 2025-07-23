@@ -4,68 +4,65 @@ import random
 from pathlib import Path
 import logging
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- NEW AUGMENTATION FUNCTION ---
-def apply_augmentation(image):
+def apply_medical_augmentation(image):
     """
-    Applies a randomly selected augmentation to a PIL image.
+    Applies a medically appropriate augmentation to a chest X-ray PIL image.
 
     Args:
-        image (PIL.Image.Image): The input image.
+        image (PIL.Image.Image): The input grayscale chest X-ray.
 
     Returns:
         PIL.Image.Image: The augmented image.
     """
-    # List of augmentation techniques
-    techniques = ['rotate', 'scale', 'contrast'] #, 'noise'
-    chosen_technique = random.choice(techniques)
+    techniques = ['rotate', 'scale', 'contrast', 'noise']
+    technique = random.choice(techniques)
 
-    if chosen_technique == 'rotate':
-        # Rotation (e.g. random ± 15°)
-        angle = random.uniform(-15, 15)
-        return image.rotate(angle, resample=Image.BICUBIC, expand=True)
+    if technique == 'rotate':
+        # Small rotation ±10°
+        angle = random.uniform(-10, 10)
+        rotated = image.rotate(angle, resample=Image.BICUBIC, expand=True)
+        # Center-crop/pad back to original size
+        return ImageOps.fit(rotated, image.size, method=Image.BICUBIC, centering=(0.5, 0.5))
 
-    elif chosen_technique == 'scale':
-        # Scaling/zooming (e.g. random zoom in/out by ~20%)
-        scale_factor = random.uniform(0.8, 1.2)
-        original_size = image.size
-        new_size = (int(original_size[0] * scale_factor), int(original_size[1] * scale_factor))
-        
-        # Resize and then crop/paste to maintain original dimensions
-        scaled_image = image.resize(new_size, resample=Image.BICUBIC)
-        
-        if scale_factor > 1.0: # Zoom in, crop center
-            left = (new_size[0] - original_size[0]) / 2
-            top = (new_size[1] - original_size[1]) / 2
-            right = (new_size[0] + original_size[0]) / 2
-            bottom = (new_size[1] + original_size[1]) / 2
-            return scaled_image.crop((left, top, right, bottom))
-        else: # Zoom out, paste on black background
-            new_img = Image.new(image.mode, original_size, (0, 0, 0))
-            paste_position = (int((original_size[0] - new_size[0]) / 2), int((original_size[1] - new_size[1]) / 2))
-            new_img.paste(scaled_image, paste_position)
-            return new_img
+    elif technique == 'scale':
+        # Zoom in/out by ±10%
+        scale_factor = random.uniform(0.9, 1.1)
+        w, h = image.size
+        new_w, new_h = int(w * scale_factor), int(h * scale_factor)
+        scaled = image.resize((new_w, new_h), resample=Image.BICUBIC)
+        # Reflect-pad then crop to original dimensions
+        pad_w = max(0, w - new_w)
+        pad_h = max(0, h - new_h)
+        padded = ImageOps.expand(
+            scaled,
+            border=(pad_w // 2, pad_h // 2),
+            fill=None  # reflect mode
+        )
+        return padded.crop((0, 0, w, h))
 
-    elif chosen_technique == 'contrast':
-        # Contrast adjustment
-        factor = random.uniform(0.6, 1.4) # 1.0 is original contrast
+    elif technique == 'contrast':
+        # Narrow contrast adjustment
+        factor = random.uniform(0.8, 1.2)
         enhancer = ImageEnhance.Contrast(image)
         return enhancer.enhance(factor)
 
-    elif chosen_technique == 'noise':
-        # Gaussian noise
-        img_array = np.array(image)
-        # Add noise with a random standard deviation
-        noise = np.random.normal(0, random.uniform(10, 25), img_array.shape)
-        noisy_array = np.clip(img_array + noise, 0, 255).astype(np.uint8)
-        return Image.fromarray(noisy_array)
+    elif technique == 'noise':
+        # Poisson-like noise
+        arr = np.array(image).astype(np.float32) / 255.0
+        noisy = np.random.poisson(arr * 255.0) / 255.0
+        noisy_img = (np.clip(noisy, 0, 1) * 255).astype(np.uint8)
+        return Image.fromarray(noisy_img)
+    raise RuntimeError("augmentation faild!")
+    # Fallback (shouldn't happen)
+    # return image
 
-    return image # Fallback
+
 
 def create_directory_structure(destination_root, classes):
     """
