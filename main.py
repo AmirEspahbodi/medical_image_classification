@@ -53,11 +53,11 @@ def main(cfg):
         frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
         del frozen_encoder3
         match cfg.network.model:
-            case "resnet_sidevit_sv_cnn":
-                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_SV_CNNVIT
-            case "resnet_sidevit_mlp_cnn":
-                ResNetSideViTClassifier_3RDVIT = CoAtNetSideViTClassifier_MLP_CNNVIT
-            case "resnet_sidevit_fc_cnn":
+            case "coatnet_3sidevit_1":
+                ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_MLP_CNNVIT
+            case "coatnet_3sidevit_2":
+                ResNetSideViTClassifier_3RDVIT = CoAtNetSideViTClassifier_Advanced
+            case "coatnet_3sidevit_3":
                 ResNetSideViTClassifier_3RDVIT = ResNetSideViTClassifier_FC_CNNVIT
         resnet_side_vit_model = ResNetSideViTClassifier_3RDVIT(
             side_vit1=side_vit_model1,
