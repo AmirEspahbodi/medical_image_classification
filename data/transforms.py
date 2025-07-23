@@ -90,7 +90,7 @@ def data_transforms(cfg):
     side_resize = transforms.Resize((cfg.network.side_input_size, cfg.network.side_input_size))
 
     if cfg.dataset.preload_path:
-        train_preprocess = transforms.Compose([*augmentations, *normalization])
+        train_preprocess = transforms.Compose([[], *normalization])
         test_preprocess = transforms.Compose([side_resize, *normalization])
     else:
         train_lpm_preprocess = transforms.Compose([lpm_resize, *normalization])
