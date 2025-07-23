@@ -6,7 +6,7 @@ from torchvision import models
 from typing import Any, Tuple
 
 
-class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
+class CoAtNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -107,7 +107,7 @@ class ResNetSideViTClassifier_MLP_CNNVIT2(nn.Module):
         return logits
 
 #########################################################################################################
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
     def __init__(
         self,
         side_vit1,
