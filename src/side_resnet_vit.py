@@ -284,8 +284,12 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
                 param.requires_grad = True
 
         # --- Channel Dimensions ---
-        feature_info = self.backbone.feature_info.get_dicts(keys=[2, 3, 4])
-        c2_dim, c3_dim, c4_dim = [info['num_chs'] for info in feature_info]
+        # Correctly access feature info directly from the backbone's feature_info attribute.
+        # This is a list of dicts, one for each feature map returned by features_only=True.
+        feature_info = self.backbone.feature_info
+        c2_dim = feature_info[2]['num_chs']
+        c3_dim = feature_info[3]['num_chs']
+        c4_dim = feature_info[4]['num_chs']
         
         in_ch = self.cfg.dataset.image_channel_num
         num_classes = 2 # Should be 4 for your dataset
@@ -310,10 +314,10 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
         self.side_vit_cnn = side_vit_cnn
 
         # --- Final Classification Head ---
-        # The input dimension of the MLP is now 3 * num_classes because we are concatenating the outputs.
-        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 8)
+        # The input dimension of the MLP is num_classes because we are averaging the outputs.
+        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
-            nn.Linear(num_classes * 3, hidden_dim),
+            nn.Linear(num_classes, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.3), # Increased dropout
             nn.Linear(hidden_dim, num_classes)
