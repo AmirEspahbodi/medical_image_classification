@@ -121,18 +121,14 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=pretrained, features_only=True
         )
-        # Freeze all except the last block of stage-4 to minimize trainable params
         for name, param in self.backbone.named_parameters():
-            # only finetune blocks.3 (stage-4) last block
-            if 'blocks.3' in name and 'conv.' in name:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+            param.requires_grad = False if 'layer3' not in name and 'layer4' not in name else True
+
 
         # Channel dims for CoAtNet stages
         c2, c3, c4 = 192, 384, 768
         in_ch = cfg.dataset.image_channel_num  # e.g. 3 for RGB
-        num_classes = cfg.dataset.num_classes
+        num_classes = 2
 
         # --- Projection + Adapter for Side-ViT inputs ---
         self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
