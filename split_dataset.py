@@ -89,14 +89,14 @@ def setup_dataset(original_path, target_path, augment_flag):
             dst = os.path.join(target_path, split, class_name)
             os.makedirs(dst, exist_ok=True)
             files = [f for f in os.listdir(src) if os.path.isfile(os.path.join(src, f))]
-            logger.info(f"Copying {len(files)} from {src} to {dst}")
+            logger.info(f"Copying {'and augmenting' if split=='train' and augment_flag == 1 else ''}{len(files)} from {src} to {dst}")
             for f in files:
                 src_file = os.path.join(src, f)
                 dst_file = os.path.join(dst, f)
                 shutil.copy2(src_file, dst_file)
 
                 if split == 'train' and augment_flag == 1:
-                    if class_name == 'PNEUMONIA' and random.random() > 0.5:
+                    if class_name == 'PNEUMONIA' and random.random() >= 0.5:
                         continue
                     try:
                         with Image.open(src_file).convert('L') as img_gray:
