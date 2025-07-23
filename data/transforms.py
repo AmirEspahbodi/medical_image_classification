@@ -96,7 +96,7 @@ def data_transforms(cfg):
         test_preprocess = transforms.Compose([side_resize, *normalization])
     else:
         train_lpm_preprocess = transforms.Compose([lpm_resize, *normalization])
-        train_side_preprocess = transforms.Compose([*augmentations, *normalization])
+        train_side_preprocess = transforms.Compose([[], *normalization])
         test_lpm_preprocess = transforms.Compose([lpm_resize, *normalization])
         test_side_preprocess = transforms.Compose([side_resize, *normalization])
 
