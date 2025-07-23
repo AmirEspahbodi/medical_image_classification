@@ -315,9 +315,9 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
 
         # --- Final Classification Head ---
         # The input dimension of the MLP is num_classes because we are averaging the outputs.
-        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 8)
+        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
-            nn.Linear(4, hidden_dim),
+            nn.Linear(6, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, num_classes)
         )
