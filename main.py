@@ -63,7 +63,7 @@ def main(cfg):
             EnhancedSideViTClassifier = ResNetSideViTClassifier_MLP_CNNVIT
         case _:
             raise RuntimeError()
-    resnet_side_vit_model = EnhancedSideViTClassifier(
+    classifier_with_side_vits = EnhancedSideViTClassifier(
         side_vit1=side_vit_model1,
         side_vit2=side_vit_model2,
         side_vit_cnn=side_vit_model_cnn,
@@ -75,7 +75,7 @@ def main(cfg):
     train(
         cfg=cfg,
         frozen_encoder=frozen_encoder,
-        model=resnet_side_vit_model,
+        model=classifier_with_side_vits,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         estimator=estimator
@@ -84,12 +84,12 @@ def main(cfg):
     print('This is the performance of the final model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'final_weights.pt')
     load_weights(resnet_side_vit_model, checkpoint)
-    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
+    evaluate(cfg, frozen_encoder, classifier_with_side_vits, test_dataset, estimator)
 
     print('This is the performance of the best validation model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'best_validation_weights.pt')
     load_weights(resnet_side_vit_model, checkpoint)
-    evaluate(cfg, frozen_encoder, resnet_side_vit_model, test_dataset, estimator)
+    evaluate(cfg, frozen_encoder, classifier_with_side_vits, test_dataset, estimator)
 
 
 def set_seed(seed, deterministic=False):
