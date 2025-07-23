@@ -153,9 +153,9 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         self.side_vit_cnn = side_vit_cnn
 
         # Final MLP head with stronger dropout and smaller hidden size
-        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
+        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 8)
         self.mlp = nn.Sequential(
-            nn.Linear(6, hidden_dim),
+            nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, cfg.dataset.num_classes)
         )
@@ -177,16 +177,16 @@ class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         sv2_in = self.adapt_sv2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False))
 
         # 4) Side-ViT-CNN input (raw image)
-        sv3_in = x
+        # sv3_in = x
 
         # 5) Forward through Side-ViTs (black boxes)
         vit_out1 = self.sidevit1(sv1_in, K_value, Q_value)
         vit_out2 = self.sidevit2(sv2_in, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
+        # vit_out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
 
         # 6) Fixed-average fusion + dropout
         # Combine and classify
-        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)  # [batch, 4]
+        combined = torch.cat([vit_out1, vit_out2], dim=1)  # [batch, 4]
         logits = self.mlp(combined)
         return logits
 
@@ -315,9 +315,9 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
 
         # --- Final Classification Head ---
         # The input dimension of the MLP is num_classes because we are averaging the outputs.
-        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 12)
+        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 8)
         self.mlp = nn.Sequential(
-            nn.Linear(6, hidden_dim),
+            nn.Linear(4, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, num_classes)
         )
@@ -342,13 +342,13 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
 
 
         # Side-ViT-CNN Input
-        sv3_in = x
+        # sv3_in = x
 
         # Forward through Side-ViTs
         out1 = self.sidevit1(sv1_in, K_value, Q_value)
         out2 = self.sidevit2(sv2_in, K_value, Q_value)
-        out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
+        # out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
 
-        combined = torch.cat([out1, out2, out3], dim=1)  # [batch, 4]
+        combined = torch.cat([out1, out2], dim=1)  # [batch, 4]
         logits = self.mlp(combined)
         return logits
