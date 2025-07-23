@@ -319,7 +319,6 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(num_classes, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, num_classes)
         )
 
