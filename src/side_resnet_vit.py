@@ -315,7 +315,7 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
 
         # --- Final Classification Head ---
         # The input dimension of the MLP is num_classes because we are averaging the outputs.
-        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 8)
+        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 12)
         self.mlp = nn.Sequential(
             nn.Linear(num_classes, hidden_dim),
             nn.ReLU(inplace=True),
@@ -349,10 +349,6 @@ class CoAtNetSideViTClassifier_Advanced(nn.Module):
         out2 = self.sidevit2(sv2_in, K_value, Q_value)
         out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
 
-        # Fusion by simple averaging
-        fused = (out1 + out2 + out3) / 3.0
-        
-        # Final Classification
-        logits = self.mlp(fused)
-        
+        combined = torch.cat([out1, out2, out3], dim=1)  # [batch, 4]
+        logits = self.mlp(combined)
         return logits
