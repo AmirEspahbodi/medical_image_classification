@@ -12,6 +12,7 @@ from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
 from src.side_resnet_vit import (ResNetSideViTClassifier_MLP_CNNVIT,CoAtNetSideViTClassifier_Advanced)
+from src.old_models import (ResNetSideViTClassifier_MLP_CNNVIT,ResNetSideViTClassifier_FC_CNNVIT)
 
 
 @hydra.main(config_path="configs", config_name="config")
