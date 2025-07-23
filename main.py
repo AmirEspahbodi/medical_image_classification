@@ -83,12 +83,12 @@ def main(cfg):
 
     print('This is the performance of the final model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'final_weights.pt')
-    load_weights(resnet_side_vit_model, checkpoint)
+    load_weights(classifier_with_side_vits, checkpoint)
     evaluate(cfg, frozen_encoder, classifier_with_side_vits, test_dataset, estimator)
 
     print('This is the performance of the best validation model:')
     checkpoint = os.path.join(cfg.dataset.save_path, 'best_validation_weights.pt')
-    load_weights(resnet_side_vit_model, checkpoint)
+    load_weights(classifier_with_side_vits, checkpoint)
     evaluate(cfg, frozen_encoder, classifier_with_side_vits, test_dataset, estimator)
 
 
