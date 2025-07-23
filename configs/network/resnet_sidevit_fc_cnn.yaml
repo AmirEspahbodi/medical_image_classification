@@ -8,5 +8,5 @@ token_ratio: 0.2
 token_imp: global
 side_input_size: 128 # down-sampled image resolution for the side network
 pretrained_path: google/vit-base-patch16-384 # pretrained model weights for LPM
-model: resnet_sidevit_sv_cnn
+model: resnet_sidevit_fc_cnn
 
