@@ -654,9 +654,9 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
 
         # --- 4. Forward through Side-ViTs ---
-        vit_out1 = self.side_vit1(vit_input1)
-        vit_out2 = self.side_vit2(vit_input2)
-        vit_out3 = self.side_vit3(vit_input3)
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
+        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         # --- 5. Fuse Side-ViT Outputs ---
         context_features = torch.stack([vit_out2, vit_out3], dim=1)
@@ -666,3 +666,83 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         logits = self.classifier_head(fused_output)
         
         return logits
+
+
+
+class CoAtNetSideViTClassifier_5(nn.Module):
+    """
+    An alternative hybrid classifier that uses simple concatenation for input fusion.
+    (OPTION 2: Concatenates downsampled processed features and raw image)
+    """
+    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
+        super().__init__()
+        self.cfg = cfg
+        self.num_classes = cfg.dataset.num_classes
+        
+        self.backbone = timm.create_model(
+            'coatnet_0_rw_224', pretrained=True, features_only=True,
+            drop_path_rate=0.2
+        )
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+            
+        feat_dims = self.backbone.feature_info.channels()
+        c2, c3, c4 = feat_dims[1], feat_dims[2], feat_dims[3]
+
+        # Feature preparation paths now project down to a single channel
+        self.gate1 = GatedAttentionModule(c2, c3, 64)
+        self.proj1 = nn.Conv2d(64, 1, kernel_size=1)
+        
+        self.gate2 = GatedAttentionModule(c3, c4, 64)
+        self.proj2 = nn.Conv2d(64, 1, kernel_size=1)
+
+        self.proj3_seq = nn.Sequential(
+            nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1)
+        )
+        
+        # Side-ViTs now expect 2 channels: 1 from processed features, 1 from raw image
+        self.side_vit1, self.side_vit2, self.side_vit3 = side_vit1, side_vit2, side_vit3
+        
+        self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
+        
+        self.classifier_head = nn.Sequential(
+            nn.LayerNorm(self.num_classes),
+            nn.Linear(self.num_classes, self.num_classes * 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(self.num_classes * 2, self.num_classes)
+        )
+
+    def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor:
+        x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        features = self.backbone(x_backbone)
+        f2, f3, f4 = features[1], features[2], features[3]
+
+        # Prepare single-channel processed features
+        proc_feat1 = self.proj1(self.gate1(f2, f3))
+        proc_feat2 = self.proj2(self.gate2(f3, f4))
+        proc_feat3 = self.proj3_seq(f4)
+        
+        # Downsample processed features and raw image to 64x64
+        vit_input_size = (64, 64)
+        proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
+        proc_feat2_res = F.interpolate(proc_feat2, size=vit_input_size, mode='bilinear', align_corners=False)
+        proc_feat3_res = F.interpolate(proc_feat3, size=vit_input_size, mode='bilinear', align_corners=False)
+        x_resized = F.interpolate(x, size=vit_input_size, mode='bilinear', align_corners=False)
+
+        # Concatenate along the channel dimension
+        vit_input1 = torch.cat([proc_feat1_res, x_resized], dim=1)
+        vit_input2 = torch.cat([proc_feat2_res, x_resized], dim=1)
+        vit_input3 = torch.cat([proc_feat3_res, x_resized], dim=1)
+
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
+        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
+        
+        context_features = torch.stack([vit_out2, vit_out3], dim=1)
+        fused_output = self.output_fusion(vit_out1, context_features)
+        
+        logits = self.classifier_head(fused_output)
+        return logits
+
