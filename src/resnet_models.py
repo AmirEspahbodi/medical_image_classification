@@ -6,7 +6,7 @@ from .bridge import FineGrainedPromptTuning
 from typing import Any
 
 
-class ResNetSideViTClassifier_FC_CNNVIT(nn.Module):
+class ResNetSideViTClassifier_1(nn.Module):
     def __init__(
         self,
         side_vit1: FineGrainedPromptTuning,
@@ -89,7 +89,7 @@ class ResNetSideViTClassifier_FC_CNNVIT(nn.Module):
         return logits
 
 
-class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class ResNetSideViTClassifier_2(nn.Module):
     def __init__(
         self,
         side_vit1: FineGrainedPromptTuning,
@@ -173,4 +173,139 @@ class ResNetSideViTClassifier_MLP_CNNVIT(nn.Module):
         # Combine and classify
         combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)  # [batch, 4]
         logits = self.mlp(combined)
+        return logits
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DropPath(nn.Module):
+    """
+    DropPath (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    """
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        return x.div(keep_prob) * random_tensor
+
+class ResnetSideViTClassifier_3_Robust(nn.Module):
+    def __init__(
+        self,
+        side_vit1: nn.Module,
+        side_vit2: nn.Module,
+        side_vit_cnn: nn.Module,
+        cfg: Any,
+        resnet_variant: str = 'resnet50',
+        pretrained: bool = True,
+    ):
+        super().__init__()
+        # Backbone selection
+        variants = {'resnet18': (models.resnet18,  [64, 128, 256, 512]),
+                    'resnet50': (models.resnet50, [256, 512, 1024, 2048]),
+                    'resnet101': (models.resnet101, [256, 512, 1024, 2048])}
+        if resnet_variant not in variants:
+            raise ValueError(f"Unsupported ResNet variant: {resnet_variant}")
+        backbone_fn, channels = variants[resnet_variant]
+        backbone = backbone_fn(pretrained=pretrained)
+
+        # Freeze early layers; fine-tune deeper ones
+        for name, param in backbone.named_parameters():
+            param.requires_grad = False if 'layer3' not in name and 'layer4' not in name else True
+
+        # Backbone feature extractors
+        self.stem  = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
+        self.layer1 = backbone.layer1  
+        self.layer2 = backbone.layer2  
+        self.layer3 = backbone.layer3  
+        self.layer4 = backbone.layer4  
+
+        # Feature Pyramid: lateral convs with normalization, activation, dropout
+        C = cfg.dataset.image_channel_num
+        self.lateral2 = nn.Sequential(
+            nn.Conv2d(channels[1], C, kernel_size=1, bias=False),
+            nn.GroupNorm(8, C),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.1)
+        )
+        self.lateral3 = nn.Sequential(
+            nn.Conv2d(channels[2], C, kernel_size=1, bias=False),
+            nn.GroupNorm(8, C),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.1)
+        )
+        self.lateral4 = nn.Sequential(
+            nn.Conv2d(channels[3], C, kernel_size=1, bias=False),
+            nn.GroupNorm(8, C),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.1)
+        )
+
+        # Side-ViT backbones (black-box)
+        self.sidevit1    = side_vit1
+        self.sidevit2    = side_vit2
+        self.sidevit_cnn = side_vit_cnn
+
+        # Stochastic depth
+        # Fusion normalization and dropout before classifier (keep head unchanged)
+        total_dim = 2 * 3
+        self.fusion_norm    = nn.LayerNorm(total_dim)
+
+        # Classification head (unchanged)
+        hidden = getattr(cfg, 'mlp_hidden_dim', 16)
+        self.classifier = nn.Sequential(
+            nn.Linear(total_dim, hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=cfg.dropout if hasattr(cfg, 'dropout') else 0.2),
+            nn.Linear(hidden, cfg.dataset.num_classes)
+        )
+
+        # Initialize new layers
+        for m in [*self.lateral2, *self.lateral3, *self.lateral4, self.fusion_norm, *self.classifier]:
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor, K_value, Q_value) -> torch.Tensor:
+        # Backbone forward
+        x0 = self.stem(x)
+        f1 = self.layer1(x0)
+        f2 = self.layer2(f1)
+        f3 = self.layer3(f2)
+        f4 = self.layer4(f3)
+
+        # FPN with dropout-wrapped laterals
+        p4 = self.lateral4(f4)
+        p3 = self.lateral3(f3) + F.interpolate(p4, size=f3.shape[-2:], mode='nearest')
+        p2 = self.lateral2(f2) + F.interpolate(p3, size=f2.shape[-2:], mode='nearest')
+
+        # Resize for ViT inputs
+        feat1 = F.interpolate(p2, size=(128,128), mode='bilinear', align_corners=False)
+        feat2 = F.interpolate(p3, size=(128,128), mode='bilinear', align_corners=False)
+        feat3 = x
+
+        # Stochastic input dropouts
+        feat1 = F.dropout(feat1, p=0.1, training=self.training)
+        feat2 = F.dropout(feat2, p=0.1, training=self.training)
+        feat3 = F.dropout(feat3, p=0.1, training=self.training)
+
+        # Side-ViT forward
+        out1 = self.sidevit1(feat1, K_value, Q_value)
+        out2 = self.sidevit2(feat2, K_value, Q_value)
+        out3 = self.sidevit_cnn(feat3, K_value, Q_value)
+
+        # Combine and apply stochastic depth
+        combined = torch.cat([out1, out2, out3], dim=1)
+        logits = self.classifier(combined)
         return logits
