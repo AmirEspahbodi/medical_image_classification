@@ -5,7 +5,7 @@ import timm
 from torchvision import models
 from typing import Any, Tuple
 
-class CoAtNetSideViTClassifier_MLP_CNNVIT(nn.Module):
+class CoAtNetSideViTClassifier_1(nn.Module):
     def __init__(
         self,
         side_vit1,
@@ -157,7 +157,7 @@ class LightweightFPNFusion(nn.Module):
         out = self.out_proj(fused_low_dim)
         return out
 
-class CoAtNetSideViTClassifier_Advanced(nn.Module):
+class CoAtNetSideViTClassifier_2(nn.Module):
     def __init__(
         self,
         side_vit1,
