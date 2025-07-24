@@ -393,7 +393,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         pretrained: bool = True,
         ):
         super().__init__()
-        NUM_CLASSES = cfg.dataset.num_classe
+        NUM_CLASSES = cfg.dataset.num_classes
         IMG_SIZE = 128
         
         BACKBONE_MODEL = 'coatnet_0_rw_224'
