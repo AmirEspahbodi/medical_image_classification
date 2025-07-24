@@ -452,8 +452,12 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         return pooled_feat
 
     def forward(self, x, key_states, value_states):
+        x_resized_for_backbone = F.interpolate(
+            x, size=(224, 224), mode='bilinear', align_corners=False
+        )
+        
         # 1. Extract feature maps from the CNN backbone
-        f2, f3, f4 = self.cnn_backbone(x)
+        f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
 
         # 2. Process feature pairs for each stream
         stream1_vec = self.process_feature_pair(f2, f3)
