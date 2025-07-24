@@ -744,7 +744,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         vit_input1 = torch.cat([proc_feat1_res, x_resized], dim=1)
         vit_input2 = torch.cat([proc_feat2_res, x_resized], dim=1)
         vit_input3 = torch.cat([proc_feat3_res, x_resized], dim=1)
-
+        print(f"vit_input1 = {vit_input1}")
         vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
