@@ -409,7 +409,7 @@ class DualStreamHybridNetwork(nn.Module):
         self.num_patches = (IMG_SIZE // vit_patch_size) ** 2
         self.patch_dim = IMG_CHANNELS * vit_patch_size * vit_patch_size
         # --- Core Components ---
-        self.cnn_backbone = MultiScaleCoAtNetBackbone(pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
+        self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
         stream1_dim = COATNET_DIMS[1] + COATNET_DIMS[2] # 192 + 384 = 576
