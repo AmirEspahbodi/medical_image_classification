@@ -39,76 +39,12 @@ class CoAtNetSideViTClassifier_1(nn.Module):
 
         # Channel dims for CoAtNet stages
         c2, c3, c4 = 192, 384, 768
-        in_ch = cfg.dataset.image_channel_num  # e.g. 3 for RGB
-
-        # --- Projection + Adapter for Side-ViT inputs with SE & weight-standardized conv ---
-        def make_adapter(channels):
-            return nn.Sequential(
-                StdConv2d(channels, channels, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(channels),
-                nn.ReLU(inplace=True),
-                # Squeeze-and-Excitation block
-                nn.AdaptiveAvgPool2d(1),
-                nn.Conv2d(channels, channels // 16, 1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(channels // 16, channels, 1),
-                nn.Sigmoid(),
-                nn.Dropout2d(p=0.4)
-            )
-
-        # 1x1 projections
-        self.proj_sv1 = StdConv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
-        self.adapt_sv1 = make_adapter(in_ch)
-
-        self.proj_sv2 = StdConv2d(c4, in_ch, kernel_size=1, bias=False)
-        self.adapt_sv2 = make_adapter(in_ch)
-
-        # Side-ViT ensembles (treated as black boxes)
-        self.sidevit1 = side_vit1
-        self.sidevit2 = side_vit2
-        self.side_vit_cnn = side_vit_cnn
-
-        # Final MLP head with LayerNorm, dropout
-        hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
-        self.norm = nn.LayerNorm(6)
-        self.head = nn.Sequential(
-            nn.Linear(6, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=0.6),
-            nn.Linear(hidden_dim, cfg.dataset.num_classes)
-        )
-
-    def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # 1) Resize for backbone
-        x_back = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        feats = self.backbone(x_back)
-        f2, f3, f4 = feats[2], feats[3], feats[4]
-
-        # 2) SV1: multi-scale fusion
-        f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
-        cat23 = torch.cat([f2, f3_up], dim=1)
-        sv1 = self.proj_sv1(cat23)
-        sv1 = F.interpolate(sv1, size=(128, 128), mode='bilinear', align_corners=False)
-        sv1 = self.adapt_sv1(sv1)
-
-        # 3) SV2: high-level
-        sv2 = self.proj_sv2(f4)
-        sv2 = F.interpolate(sv2, size=(128, 128), mode='bilinear', align_corners=False)
-        sv2 = self.adapt_sv2(sv2)
-
-        # 4) SV3: raw image branch
-        sv3 = x
-
-        # 5) Forward through Side-ViTs
-        out1 = self.sidevit1(sv1, K_value, Q_value)
-        out2 = self.sidevit2(sv2, K_value, Q_value)
-        out3 = self.side_vit_cnn(sv3, K_value, Q_value)
-
-        # 6) Fusion + classification
-        combined = torch.cat([out1, out2, out3], dim=1)
-        combined = self.norm(combined)
-        logits = self.head(combined)
-        return logits
+                # Determine input channels (e.g. 3 for RGB, 1 for grayscale)
+        in_ch = getattr(cfg.dataset, 'image_channel_num', None)
+        if not isinstance(in_ch, int) or in_ch < 1:
+            # Fallback to grayscale if misconfigured
+            in_ch = 1  # assume single-channel input
+            print(f"Warning: invalid image_channel_num in config, fallback to in_ch={in_ch}")
 
 
 
