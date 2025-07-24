@@ -493,3 +493,176 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         patches_reshaped = patches.transpose(1, 2).reshape(patches.shape[0], self.patch_dim, height, width)
         reconstructed_img = self.unpatchify(patches_reshaped)
         return reconstructed_img
+
+        
+#####################################################################################################################################################################
+
+class GatedAttentionModule(nn.Module):
+    def __init__(self, low_level_channels: int, high_level_channels: int, output_channels: int):
+        super().__init__()
+        # Convolution to generate attention map from high-level features
+        self.attn_conv = nn.Conv2d(high_level_channels, low_level_channels, kernel_size=1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+        
+        # 1x1 convolution to process the attended features
+        self.proj_conv = nn.Conv2d(low_level_channels, output_channels, kernel_size=1, bias=False)
+        self.bn = nn.BatchNorm2d(output_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, low_level_feat: torch.Tensor, high_level_feat: torch.Tensor) -> torch.Tensor:
+        # Upsample high-level features to match the spatial dimensions of low-level features
+        high_level_upsampled = F.interpolate(high_level_feat, size=low_level_feat.shape[-2:], mode='bilinear', align_corners=False)
+        
+        # Generate spatial attention map
+        attention_map = self.attn_conv(high_level_upsampled)
+        attention_map = self.sigmoid(attention_map)
+        
+        # Apply attention to low-level features
+        attended_feat = low_level_feat * attention_map
+        
+        # Project and normalize the result
+        output = self.proj_conv(attended_feat)
+        output = self.bn(output)
+        output = self.relu(output)
+        
+        return output
+
+class SpatialCrossAttention(nn.Module):
+    def __init__(self, query_channels: int, context_channels: int, output_channels: int):
+        super().__init__()
+        # Use a smaller intermediate dimension for efficiency
+        inter_channels = query_channels // 2
+        
+        # Convolutions to generate Query, Key, Value from inputs
+        self.query_conv = nn.Conv2d(query_channels, inter_channels, kernel_size=1)
+        self.key_conv = nn.Conv2d(context_channels, inter_channels, kernel_size=1)
+        self.value_conv = nn.Conv2d(context_channels, query_channels, kernel_size=1)
+        
+        # Final projection layer
+        self.proj_conv = nn.Conv2d(query_channels, output_channels, kernel_size=1)
+        self.norm = nn.GroupNorm(1, output_channels) # Using GroupNorm for stability
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, query_feat: torch.Tensor, context_feat: torch.Tensor) -> torch.Tensor:
+        B, C_q, H, W = query_feat.shape
+        
+        # Generate Q, K, V
+        q = self.query_conv(query_feat).view(B, -1, H * W).permute(0, 2, 1) # (B, H*W, C_inter)
+        k = self.key_conv(context_feat).view(B, -1, H * W) # (B, C_inter, H*W)
+        v = self.value_conv(context_feat).view(B, -1, H * W) # (B, C_q, H*W)
+        
+        # Calculate attention scores
+        attention_scores = torch.bmm(q, k) # (B, H*W, H*W)
+        attention_probs = self.softmax(attention_scores)
+        
+        # Apply attention to Value
+        attended_v = torch.bmm(v, attention_probs.permute(0, 2, 1)) # (B, C_q, H*W)
+        attended_v = attended_v.view(B, C_q, H, W)
+        
+        # Add residual connection and project
+        fused_feat = self.proj_conv(query_feat + attended_v)
+        
+        return self.norm(fused_feat)
+
+
+class CrossAttentionFusion(nn.Module):
+    """
+    Fuses multiple 1D feature vectors (e.g., from parallel ViT outputs) using multi-head cross-attention.
+    """
+    def __init__(self, embed_dim: int, num_heads: int):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, query_feat: torch.Tensor, context_feat: torch.Tensor) -> torch.Tensor:
+        query_feat_seq = query_feat.unsqueeze(1)
+        # Context needs to be a sequence of items to attend to
+        context_feat_seq = context_feat.view(query_feat.shape[0], -1, query_feat.shape[-1])
+        
+        attn_output, _ = self.attention(query=query_feat_seq, key=context_feat_seq, value=context_feat_seq)
+        fused_feat = attn_output.squeeze(1)
+        return self.norm(fused_feat + query_feat)
+
+
+class CoAtNetSideViTClassifier_4(nn.Module):
+    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
+        super().__init__()
+        self.cfg = cfg
+        self.num_classes = cfg.dataset.num_classes
+        
+        # --- Backbone: CoAtNet ---
+        self.backbone = timm.create_model(
+            'coatnet_0_rw_224', pretrained=True, features_only=True,
+            drop_path_rate=cfg.model.drop_path_rate
+        )
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+            
+        feat_dims = self.backbone.feature_info.channels()
+        c2, c3, c4 = feat_dims[1], feat_dims[2], feat_dims[3]
+
+        # --- Feature Preparation Paths ---
+        self.gate1 = GatedAttentionModule(c2, c3, 64)
+        self.gate2 = GatedAttentionModule(c3, c4, 64)
+        self.proj3 = nn.Sequential(
+            nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
+        )
+        
+        # --- Spatial Cross-Attention Fusion for ViT Inputs ---
+        self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
+        self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
+        self.spatial_fusion3 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
+        
+        # --- Side-ViT Modules ---
+        self.side_vit1 = side_vit1
+        self.side_vit2 = side_vit2
+        self.side_vit3 = side_vit3
+
+        # --- Fusion of Side-ViT Outputs ---
+        self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
+        
+        # --- Final Classifier Head ---
+        self.classifier_head = nn.Sequential(
+            nn.LayerNorm(self.num_classes),
+            nn.Linear(self.num_classes, self.num_classes * 2),
+            nn.GELU(),
+            nn.Dropout(cfg.model.dropout_rate),
+            nn.Linear(self.num_classes * 2, self.num_classes)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # --- 1. Backbone Feature Extraction ---
+        x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        features = self.backbone(x_backbone)
+        f2, f3, f4 = features[1], features[2], features[3]
+
+        # --- 2. Prepare Processed Features (Queries) ---
+        proc_feat1 = self.gate1(f2, f3)
+        proc_feat2 = self.gate2(f3, f4)
+        proc_feat3 = self.proj3(f4)
+        
+        # --- 3. Fuse with Raw Image and Feed to Side-ViTs ---
+        x_resized = F.interpolate(x, size=(proc_feat1.shape[-2], proc_feat1.shape[-1]), mode='bilinear', align_corners=False)
+
+        vit_input1 = self.spatial_fusion1(proc_feat1, x_resized)
+        vit_input2 = self.spatial_fusion2(proc_feat2, x_resized)
+        vit_input3 = self.spatial_fusion3(proc_feat3, x_resized)
+        
+        # Interpolate to final ViT input size (128x128)
+        vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_input2 = F.interpolate(vit_input2, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
+
+        # --- 4. Forward through Side-ViTs ---
+        vit_out1 = self.side_vit1(vit_input1)
+        vit_out2 = self.side_vit2(vit_input2)
+        vit_out3 = self.side_vit3(vit_input3)
+        
+        # --- 5. Fuse Side-ViT Outputs ---
+        context_features = torch.stack([vit_out2, vit_out3], dim=1)
+        fused_output = self.output_fusion(vit_out1, context_features)
+        
+        # --- 6. Final Classification ---
+        logits = self.classifier_head(fused_output)
+        
+        return logits
