@@ -307,5 +307,9 @@ class ResnetSideViTClassifier_3_Robust(nn.Module):
 
         # Combine and apply stochastic depth
         combined = torch.cat([out1, out2, out3], dim=1)
+
+        combined = self.drop_path(combined)
+        fused = self.fusion_norm(combined)
+        
         logits = self.classifier(combined)
         return logits
