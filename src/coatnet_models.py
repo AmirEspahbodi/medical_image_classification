@@ -748,11 +748,6 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         vit_out1 = self.side_vit1(vit_input1,key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2,key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
-        print(f"x.shape = {x.shape}")
-        print(f"vit_input1.shape = {vit_input1.shape}")
-        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
-        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
-        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
         # fused_output = self.output_fusion(vit_out1, context_features)
