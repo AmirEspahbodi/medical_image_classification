@@ -61,7 +61,7 @@ def main(cfg):
             EnhancedSideViTClassifier = ResNetSideViTClassifier_1
         case "resnet_2":
             EnhancedSideViTClassifier = ResNetSideViTClassifier_2
-        case "resnet_3:
+        case "resnet_3":
             EnhancedSideViTClassifier = ResNetSideViTClassifier_3
         case _:
             raise RuntimeError()
