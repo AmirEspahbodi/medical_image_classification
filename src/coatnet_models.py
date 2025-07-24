@@ -633,7 +633,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             nn.Linear(self.num_classes * 2, self.num_classes)
         )
 
-    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor: # Accept extra args to match user's call
+    def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor: # Accept extra args to match user's call
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[1], features[2], features[3]
@@ -651,9 +651,9 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         vit_input2 = F.interpolate(vit_input2, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
 
-        vit_out1 = self.side_vit1(vit_input1)
-        vit_out2 = self.side_vit2(vit_input2)
-        vit_out3 = self.side_vit3(vit_input3)
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
+        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         context_features = torch.stack([vit_out2, vit_out3], dim=1)
         fused_output = self.output_fusion(vit_out1, context_features)
