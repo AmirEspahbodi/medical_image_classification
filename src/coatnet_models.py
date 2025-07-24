@@ -664,7 +664,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
         # fused_output = self.output_fusion(vit_out1, context_features)
-        features = torch.stack([vit_out1, vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
         logits = self.classifier_head(features)
         return logits
 
