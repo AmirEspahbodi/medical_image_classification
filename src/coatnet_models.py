@@ -180,16 +180,13 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         side_vit_cnn,
         cfg: Any,
         pretrained: bool = True,
-        # NEW: Regularization parameters
-        drop_path_rate: float = 0.2,
+        drop_path_rate: float = 0.1,
         drop_block_p: float = 0.2,
-        mlp_dropout_p: float = 0.5,
     ):
         super().__init__()
         self.cfg = cfg
         
-        # --- Backbone: CoAtNet with Stochastic Depth (DropPath) ---
-        # ✨ NEW: Added drop_path_rate for strong backbone regularization.
+        # --- Backbone with DropPath (Unchanged) ---
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', 
             pretrained=pretrained, 
@@ -211,64 +208,66 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         c4_dim = feature_info[4]['num_chs']
         
         in_ch = self.cfg.dataset.image_channel_num
-        num_classes = 2 # Assuming binary classification
-
-        # --- Input Processing for Side-ViTs with DropBlock ---
         
-        # 1. For Side-ViT 1 (Multi-scale FPN Input)
+        # --- Input Processing for Side-ViTs ---
+        
+        # 1. FPN Fusion for Side-ViT 1 (Unchanged)
         fusion_dim = getattr(self.cfg, 'fpn_fusion_dim', 64)
         self.fpn_fusion = LightweightFPNFusion(c2_dim=c2_dim, c3_dim=c3_dim, fusion_dim=fusion_dim, out_dim=in_ch)
-        self.se_block_sv1 = SEBlock(channel=in_ch)
-        # ✨ NEW: Replaced Dropout2d with more effective DropBlock2d
-        self.dropout_sv1 = DropBlock2d(drop_prob=drop_block_p, block_size=7)
 
-        # 2. For Side-ViT 2 (Single-scale Input)
-        self.proj_sv2 = nn.Conv2d(c4_dim, in_ch, kernel_size=1, bias=False)
-        self.se_block_sv2 = SEBlock(channel=in_ch)
-        # ✨ NEW: Replaced Dropout2d with more effective DropBlock2d
-        self.dropout_sv2 = DropBlock2d(drop_prob=drop_block_p, block_size=7)
+        # ✨ NEW: Factorized Projection for Side-ViT 2
+        # Instead of a single Conv2d(c4_dim, in_ch), we factorize it to reduce parameters.
+        # This projects down to a small bottleneck before projecting up to the target channel size.
+        bottleneck_dim = getattr(self.cfg, 'proj_bottleneck_dim', 32)
+        self.proj_sv2 = nn.Sequential(
+            nn.Conv2d(c4_dim, bottleneck_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(bottleneck_dim, in_ch, kernel_size=1, bias=False),
+        )
 
+        # ✨ NEW: Shared Modules for Regularization
+        # Use the same SE and DropBlock modules for both paths to reduce parameters.
+        self.shared_se_block = SEBlock(channel=in_ch)
+        self.shared_drop_block = DropBlock2d(drop_prob=drop_block_p, block_size=7)
 
         # --- Side-ViT Ensembles (Unchanged) ---
         self.sidevit1 = side_vit1
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # --- Fortified Classification Head ---
-        # ✨ NEW: Added BatchNorm1d and a higher Dropout rate for a more robust classifier.
-        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 32) # Increased hidden dim slightly
+        hidden_dim = getattr(self.cfg, 'mlp_hidden_dim', 16) # Increased hidden dim slightly
         # Assuming each side-vit outputs 2 logits for binary classification. 2+2+2 = 6
         mlp_in_features = num_classes * 3 
         self.mlp = nn.Sequential(
             nn.Linear(mlp_in_features, hidden_dim),
             nn.BatchNorm1d(hidden_dim), # Stabilizes and regularizes
             nn.ReLU(inplace=True),
-            nn.Dropout(p=mlp_dropout_p), # Strong regularization before the final layer
+            nn.Dropout(p=0.2), # Strong regularization before the final layer
             nn.Linear(hidden_dim, num_classes)
         )
 
     def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # Backbone forward pass (Unchanged)
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[2], features[3], features[4]
 
-        # Side-ViT 1 Input Path (Unchanged logic, but uses new DropBlock module)
+        # --- Side-ViT 1 Input ---
         sv1_in = self.fpn_fusion(f_shallow=f2, f_deep=f3)
         sv1_in = F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False)
-        sv1_in = self.se_block_sv1(sv1_in)
-        sv1_in = self.dropout_sv1(sv1_in)
+        sv1_in = self.shared_se_block(sv1_in) # Using shared module
+        sv1_in = self.shared_drop_block(sv1_in) # Using shared module
 
-        # Side-ViT 2 Input Path (Unchanged logic, but uses new DropBlock module)
-        sv2_in = self.proj_sv2(f4)
+        # --- Side-ViT 2 Input ---
+        sv2_in = self.proj_sv2(f4) # Using factorized projection
         sv2_in = F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False)
-        sv2_in = self.se_block_sv2(sv2_in)
-        sv2_in = self.dropout_sv2(sv2_in)
+        sv2_in = self.shared_se_block(sv2_in) # Using shared module
+        sv2_in = self.shared_drop_block(sv2_in) # Using shared module
 
-        # Side-ViT-CNN Input (Unchanged)
+        # --- Side-ViT-CNN Input ---
         sv3_in = x
 
-        # Forward through Side-ViTs (Unchanged)
+        # --- Forward through Side-ViTs ---
         out1 = self.sidevit1(sv1_in, K_value, Q_value)
         out2 = self.sidevit2(sv2_in, K_value, Q_value)
         out3 = self.side_vit_cnn(sv3_in, K_value, Q_value)
