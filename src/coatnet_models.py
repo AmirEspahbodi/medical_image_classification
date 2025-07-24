@@ -394,7 +394,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         pretrained: bool = True,
         ):
         super().__init__()
-        IMG_CHANNELS  = cfg.dataset.num_classes
+        IMG_CHANNELS  = cfg.dataset.image_channel_num
+        NUM_CLASSES = cfg.dataset.num_classes
         IMG_SIZE = 128
         
         BACKBONE_MODEL = 'coatnet_0_rw_224'
@@ -430,7 +431,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
             nn.Linear(SIDE_VIT_OUT_DIM * 2, 16),
             nn.ReLU(),
             nn.Dropout(DROPOUT_RATE),
-            nn.Linear(16, num_classes)
+            nn.Linear(16, NUM_CLASSES)
         )
 
         # --- Utility Layers ---
