@@ -208,6 +208,7 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         c4_dim = feature_info[4]['num_chs']
         
         in_ch = self.cfg.dataset.image_channel_num
+        num_classes = self.cfg.dataset.num_classes
         
         # --- Input Processing for Side-ViTs ---
         
