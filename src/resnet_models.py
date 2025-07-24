@@ -197,6 +197,27 @@ class DropPath(nn.Module):
         random_tensor.floor_()
         return x.div(keep_prob) * random_tensor
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DropPath(nn.Module):
+    """
+    DropPath (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    """
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        return x.div(keep_prob) * random_tensor
+
 class ResnetSideViTClassifier_3(nn.Module):
     def __init__(
         self,
@@ -228,23 +249,30 @@ class ResnetSideViTClassifier_3(nn.Module):
         self.layer3 = backbone.layer3  
         self.layer4 = backbone.layer4  
 
-        # Feature Pyramid: lateral convs with normalization, activation, dropout
+        # Determine group norm groups dynamically
         C = cfg.dataset.image_channel_num
+        max_groups = 8
+        for g in range(max_groups, 0, -1):
+            if C % g == 0:
+                gn_groups = g
+                break
+
+        # Feature Pyramid: lateral convs with normalization, activation, dropout
         self.lateral2 = nn.Sequential(
             nn.Conv2d(channels[1], C, kernel_size=1, bias=False),
-            nn.GroupNorm(8, C),
+            nn.GroupNorm(gn_groups, C),
             nn.ReLU(inplace=True),
             nn.Dropout2d(0.1)
         )
         self.lateral3 = nn.Sequential(
             nn.Conv2d(channels[2], C, kernel_size=1, bias=False),
-            nn.GroupNorm(8, C),
+            nn.GroupNorm(gn_groups, C),
             nn.ReLU(inplace=True),
             nn.Dropout2d(0.1)
         )
         self.lateral4 = nn.Sequential(
             nn.Conv2d(channels[3], C, kernel_size=1, bias=False),
-            nn.GroupNorm(8, C),
+            nn.GroupNorm(gn_groups, C),
             nn.ReLU(inplace=True),
             nn.Dropout2d(0.1)
         )
@@ -255,11 +283,14 @@ class ResnetSideViTClassifier_3(nn.Module):
         self.sidevit_cnn = side_vit_cnn
 
         # Stochastic depth
+        self.drop_path = DropPath(drop_prob=cfg.drop_path_prob if hasattr(cfg, 'drop_path_prob') else 0.1)
+
         # Fusion normalization and dropout before classifier (keep head unchanged)
         total_dim = 2 * 3
         self.fusion_norm    = nn.LayerNorm(total_dim)
+        self.fusion_dropout = nn.Dropout(p=cfg.dropout if hasattr(cfg, 'dropout') else 0.2)
 
-        # Classification head (unchanged)
+        # Classification head (unchanged structure; dataset.num_classes can be 2)
         hidden = getattr(cfg, 'mlp_hidden_dim', 16)
         self.classifier = nn.Sequential(
             nn.Linear(total_dim, hidden),
@@ -307,9 +338,12 @@ class ResnetSideViTClassifier_3(nn.Module):
 
         # Combine and apply stochastic depth
         combined = torch.cat([out1, out2, out3], dim=1)
-
         combined = self.drop_path(combined)
+
+        # Normalize and dropout before classification
         fused = self.fusion_norm(combined)
-        
-        logits = self.classifier(combined)
+        fused = self.fusion_dropout(fused)
+
+        logits = self.classifier(fused)
         return logits
+
