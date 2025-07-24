@@ -54,7 +54,7 @@ def main(cfg):
     del frozen_encoder3
     if model in ["coatnet_3"]:
         match cfg.network.model:
-            case "coatnet_2":
+            case "coatnet_3":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_3
             case _:
                 raise RuntimeError()
