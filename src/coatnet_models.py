@@ -8,51 +8,16 @@ from timm.models.layers import DropPath, create_conv2d
 from timm.layers.std_conv import StdConv2d
 from timm.layers import DropBlock2d, Mlp
 
-# --- Helper Module for Attention-based Fusion ---
-class AttentionFusion(nn.Module):
-    """
-    Learns to weigh the outputs of the three side models.
-    This allows the model to dynamically focus on the most informative stream,
-    making it more robust and less prone to overfitting on spurious features
-    from a single branch.
-    """
-    def __init__(self, in_features: int = 2, num_streams: int = 3, hidden_dim: Optional[int] = None):
-        super().__init__()
-        self.num_streams = num_streams
-        self.in_features_per_stream = in_features
-        total_features = in_features * num_streams # e.g., 2 * 3 = 6
-        hidden_dim = hidden_dim or total_features * 2
-
-        # Attention mechanism to compute weights for each stream
-        self.attention_net = nn.Sequential(
-            nn.Linear(total_features, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, num_streams),
-            nn.Softmax(dim=-1)
-        )
-
-    def forward(self, combined_tensor: torch.Tensor) -> torch.Tensor:
-        # combined_tensor shape: [batch, total_features]
-        # Calculate attention weights
-        # attn_weights shape: [batch, num_streams]
-        attn_weights = self.attention_net(combined_tensor)
-
-        # Reshape for weighted sum
-        # Reshape combined_tensor to [batch, num_streams, features_per_stream]
-        reshaped_tensor = combined_tensor.view(-1, self.num_streams, self.in_features_per_stream)
-        # Reshape weights to [batch, num_streams, 1] for broadcasting
-        attn_weights = attn_weights.unsqueeze(-1)
-
-        # Apply weights and sum
-        # weighted_features shape: [batch, num_streams, features_per_stream]
-        weighted_features = reshaped_tensor * attn_weights
-        # Fused features shape: [batch, features_per_stream]
-        fused_output = weighted_features.sum(dim=1)
-
-        return fused_output
-
 class CoAtNetSideViTClassifier_1(nn.Module):
+    """
+    Revised classifier with a focus on parameter reduction.
+
+    Changes:
+    1.  **Removed Attention Fusion:** The attention mechanism is replaced.
+    2.  **Simple & Efficient MLP Head:** A lightweight MLP now serves as the
+        classification head, directly processing the concatenated features.
+        This significantly reduces parameters in the head.
+    """
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -62,20 +27,18 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         pretrained: bool = True,
     ):
         super().__init__()
-        # --- Configurable Hyperparameters for Regularization ---
+        # --- Regularization Hyperparameters ---
         self.drop_path_rate = getattr(cfg, 'drop_path_rate', 0.1)
         self.drop_block_p = getattr(cfg, 'drop_block_p', 0.3)
-        self.head_dropout = getattr(cfg, 'head_dropout', 0.5)
+        self.head_dropout = getattr(cfg, 'head_dropout', 0.2)
 
         # --- Backbone: CoAtNet with Stochastic Depth ---
         self.backbone = timm.create_model(
             'coatnet_0_rw_224',
             pretrained=pretrained,
             features_only=True,
-            drop_path_rate=self.drop_path_rate 
+            drop_path_rate=self.drop_path_rate # Retained for regularization
         )
-        
-        # Fine-tuning only the later stages remains a good strategy
         for name, param in self.backbone.named_parameters():
             param.requires_grad = 'block3' in name or 'block4' in name
 
@@ -84,13 +47,13 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         in_ch = cfg.dataset.image_channel_num
         num_classes = cfg.dataset.num_classes
 
-        # --- Projection + Adapter with DropBlock ---
+        # --- Adapters with DropBlock ---
         self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
         self.adapt_sv1 = nn.Sequential(
             nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(in_ch),
-            nn.GELU(), 
-            DropBlock2d(self.drop_block_p, block_size=7) 
+            nn.GELU(),
+            DropBlock2d(self.drop_block_p, block_size=7) # Retained for regularization
         )
 
         self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
@@ -106,48 +69,41 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
         
-        vit_out_features = 2 
-        total_vit_features = vit_out_features * 3
-
-        self.attention_fusion = AttentionFusion(
-            in_features=vit_out_features, 
-            num_streams=3
-        )
+        # 🔥 Simple, low-parameter MLP Head
+        vit_out_features = 2  # Assuming 2 features per side-ViT
+        total_vit_features = vit_out_features * 3 # 6 total features
         
+        # A small hidden dimension reduces parameters significantly
+        mlp_hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12) 
+
         self.mlp = nn.Sequential(
-            nn.LayerNorm(vit_out_features), 
-            nn.Linear(vit_out_features, num_classes)
+            nn.Linear(total_vit_features, mlp_hidden_dim),
+            nn.GELU(),
+            nn.Dropout(self.head_dropout),
+            nn.Linear(mlp_hidden_dim, num_classes)
         )
 
     def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # 1) Preprocess for backbone
+        # 1) Backbone Feature Extraction
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[2], features[3], features[4]
 
-        # 2) Side-ViT-1 input
+        # 2) Prepare inputs for Side-ViTs
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
         feats23 = torch.cat([f2, f3_up], dim=1)
-        sv1_in = self.proj_sv1(feats23)
-        sv1_in = self.adapt_sv1(F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False))
+        sv1_in = self.adapt_sv1(self.proj_sv1(feats23))
+        
+        sv2_in = self.adapt_sv2(self.proj_sv2(f4))
 
-        # 3) Side-ViT-2 input
-        sv2_in = self.proj_sv2(f4)
-        sv2_in = self.adapt_sv2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False))
-        
-        # 4) Forward through Side-ViTs
-        vit_out1 = self.sidevit1(sv1_in, K_value, Q_value)
-        vit_out2 = self.sidevit2(sv2_in, K_value, Q_value)
-        vit_out3 = self.side_vit_cnn(x, K_value, Q_value) # Use original image 'x'
+        # 3) Forward through Side-ViTs
+        vit_out1 = self.sidevit1(F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False), K_value, Q_value)
+        vit_out2 = self.sidevit2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False), K_value, Q_value)
+        vit_out3 = self.side_vit_cnn(x, K_value, Q_value)
 
-        # 5) Fuse and Classify
-        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1) # [batch, 6]
-        
-        # Apply attention-based fusion
-        fused_features = self.attention_fusion(combined) # [batch, 2]
-        
-        # Apply final classification head
-        logits = self.mlp(fused_features) # [batch, num_classes]
+        # 4) Simple Concatenation and MLP Classification
+        combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
+        logits = self.mlp(combined)
         
         return logits
 
