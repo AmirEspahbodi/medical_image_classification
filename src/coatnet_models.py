@@ -633,8 +633,8 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         # )
         # --- Final Classifier Head ---
         self.classifier_head = nn.Sequential(
-            nn.LayerNorm(self.num_classes),
-            nn.Linear(self.num_classes, self.num_classes * 3 * 2),
+            nn.LayerNorm(self.num_classes * 3),
+            nn.Linear(self.num_classes * 3, self.num_classes * 3 * 2),
             nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(self.num_classes * 3 * 2, self.num_classes)
