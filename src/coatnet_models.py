@@ -406,8 +406,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         SIDE_VIT_OUT_DIM = 2
                      
         self.patch_size = VIT_PATCH_SIZE
-        self.num_patches = (IMG_SIZE // vit_patch_size) ** 2
-        self.patch_dim = IMG_CHANNELS * vit_patch_size * vit_patch_size
+        self.num_patches = (IMG_SIZE // VIT_PATCH_SIZE) ** 2
+        self.patch_dim = IMG_CHANNELS * VIT_PATCH_SIZE * VIT_PATCH_SIZE
         # --- Core Components ---
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
@@ -433,8 +433,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         )
 
         # --- Utility Layers ---
-        self.patchify = nn.Conv2d(IMG_CHANNELS, self.patch_dim, kernel_size=vit_patch_size, stride=vit_patch_size)
-        self.unpatchify = nn.ConvTranspose2d(self.patch_dim, IMG_CHANNELS, kernel_size=vit_patch_size, stride=vit_patch_size)
+        self.patchify = nn.Conv2d(IMG_CHANNELS, self.patch_dim, kernel_size=VIT_PATCH_SIZE, stride=VIT_PATCH_SIZE)
+        self.unpatchify = nn.ConvTranspose2d(self.patch_dim, IMG_CHANNELS, kernel_size=VIT_PATCH_SIZE, stride=VIT_PATCH_SIZE)
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.norm_patch = nn.LayerNorm(self.patch_dim)
         self.norm_attended_patch1 = nn.LayerNorm(self.patch_dim)
