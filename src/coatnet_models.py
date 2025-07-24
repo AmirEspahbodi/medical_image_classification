@@ -692,29 +692,36 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Feature preparation paths now project down to a single channel
         self.gate1 = GatedAttentionModule(c2, c3, 64)
-        self.proj1 = nn.Conv2d(64, 1, kernel_size=1)
+        self.proj1 = nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
         
         self.gate2 = GatedAttentionModule(c3, c4, 64)
-        self.proj2 = nn.Conv2d(64, 1, kernel_size=1)
+        self.proj2 = nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
 
         self.proj3_seq = nn.Sequential(
             nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.Conv2d(64, 1, kernel_size=1)
+            nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
         )
         
         # Side-ViTs now expect 2 channels: 1 from processed features, 1 from raw image
         self.side_vit1, self.side_vit2, self.side_vit3 = side_vit1, side_vit2, side_vit3
         
-        self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
+        # self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
         
+        # self.classifier_head = nn.Sequential(
+        #     nn.LayerNorm(self.num_classes),
+        #     nn.Linear(self.num_classes, self.num_classes * 2),
+        #     nn.GELU(),
+        #     nn.Dropout(0.2),
+        #     nn.Linear(self.num_classes * 2, self.num_classes)
+        # )
         self.classifier_head = nn.Sequential(
-            nn.LayerNorm(self.num_classes),
-            nn.Linear(self.num_classes, self.num_classes * 2),
+            nn.LayerNorm(self.num_classes * 3),
+            nn.Linear(self.num_classes * 3, self.num_classes * 3 * 2),
             nn.GELU(),
             nn.Dropout(0.2),
-            nn.Linear(self.num_classes * 2, self.num_classes)
+            nn.Linear(self.num_classes * 3 * 2, self.num_classes)
         )
-
+    
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor:
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
@@ -741,9 +748,10 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
-        context_features = torch.stack([vit_out2, vit_out3], dim=1)
-        fused_output = self.output_fusion(vit_out1, context_features)
+        # context_features = torch.stack([vit_out2, vit_out3], dim=1)
+        # fused_output = self.output_fusion(vit_out1, context_features)
         
-        logits = self.classifier_head(fused_output)
+        features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
+        logits = self.classifier_head(features)
         return logits
 
