@@ -12,7 +12,7 @@ from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
 from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2
-from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2
+from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2, ResNetSideViTClassifier_3
 
 
 @hydra.main(config_path="configs", config_name="config")
@@ -61,6 +61,8 @@ def main(cfg):
             EnhancedSideViTClassifier = ResNetSideViTClassifier_1
         case "resnet_2":
             EnhancedSideViTClassifier = ResNetSideViTClassifier_2
+        case "resnet_3:
+            EnhancedSideViTClassifier = ResNetSideViTClassifier_3
         case _:
             raise RuntimeError()
     classifier_with_side_vits = EnhancedSideViTClassifier(
