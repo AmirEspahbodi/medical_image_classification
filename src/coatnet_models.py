@@ -682,7 +682,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
-            drop_path_rate=cfg.model.drop_path_rate
+            drop_path_rate=0.2
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
