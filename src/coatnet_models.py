@@ -593,7 +593,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         # --- Backbone: CoAtNet ---
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
-            drop_path_rate=cfg.model.drop_path_rate
+            drop_path_rate=0.1
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
@@ -626,7 +626,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             nn.LayerNorm(self.num_classes),
             nn.Linear(self.num_classes, self.num_classes * 2),
             nn.GELU(),
-            nn.Dropout(cfg.model.dropout_rate),
+            nn.Dropout(0.2),
             nn.Linear(self.num_classes * 2, self.num_classes)
         )
 
