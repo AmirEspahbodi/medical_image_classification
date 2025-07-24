@@ -8,16 +8,56 @@ from timm.models.layers import DropPath, create_conv2d
 from timm.layers.std_conv import StdConv2d
 from timm.layers import DropBlock2d, Mlp
 
-class CoAtNetSideViTClassifier_1(nn.Module):
-    """
-    Revised classifier with a focus on parameter reduction.
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import timm
+from timm.layers import DropBlock2d
+from typing import Any
 
-    Changes:
-    1.  **Removed Attention Fusion:** The attention mechanism is replaced.
-    2.  **Simple & Efficient MLP Head:** A lightweight MLP now serves as the
-        classification head, directly processing the concatenated features.
-        This significantly reduces parameters in the head.
+# --- LoRA Layer Implementation ---
+class LoRALayer(nn.Module):
     """
+    A Low-Rank Adaptation layer that wraps a frozen linear layer.
+    """
+    def __init__(self, original_layer: nn.Linear, rank: int):
+        super().__init__()
+        self.rank = rank
+        self.in_features = original_layer.in_features
+        self.out_features = original_layer.out_features
+
+        # Frozen original weights
+        self.original_layer = original_layer
+        self.original_layer.weight.requires_grad = False
+
+        # New, trainable low-rank matrices
+        self.lora_A = nn.Parameter(torch.randn(self.in_features, rank))
+        self.lora_B = nn.Parameter(torch.zeros(rank, self.out_features))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Original forward pass (frozen)
+        original_output = self.original_layer(x)
+        
+        # Low-rank adaptation
+        lora_update = (x @ self.lora_A) @ self.lora_B
+        
+        return original_output + lora_update
+
+def inject_lora_into_coatnet(model: nn.Module, rank: int, target_modules=['qkv', 'fc1', 'fc2']):
+    """
+    Recursively finds target linear layers and replaces them with LoRALayer.
+    """
+    for name, module in model.named_children():
+        if isinstance(module, nn.Linear) and any(target in name for target in target_modules):
+            # Replace the nn.Linear layer with our LoRALayer
+            lora_module = LoRALayer(module, rank=rank)
+            setattr(model, name, lora_module)
+        else:
+            # Recurse into child modules
+            inject_lora_into_coatnet(module, rank, target_modules)
+
+# --- The Final, Highly Efficient Model ---
+class CoAtNetSideViTClassifier_1(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
@@ -27,81 +67,72 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         pretrained: bool = True,
     ):
         super().__init__()
-        # --- Regularization Hyperparameters ---
+        # --- Hyperparameters ---
         self.drop_path_rate = getattr(cfg, 'drop_path_rate', 0.1)
         self.drop_block_p = getattr(cfg, 'drop_block_p', 0.3)
-        self.head_dropout = getattr(cfg, 'head_dropout', 0.2)
+        self.lora_rank = getattr(cfg, 'lora_rank', 8) # LoRA rank (small is good)
 
-        # --- Backbone: CoAtNet with Stochastic Depth ---
+        # --- Backbone: CoAtNet ---
         self.backbone = timm.create_model(
             'coatnet_0_rw_224',
             pretrained=pretrained,
             features_only=True,
-            drop_path_rate=self.drop_path_rate # Retained for regularization
+            drop_path_rate=self.drop_path_rate
         )
-        for name, param in self.backbone.named_parameters():
-            param.requires_grad = 'block3' in name or 'block4' in name
+
+        # 🔥 1. Freeze the entire backbone and inject LoRA layers
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        inject_lora_into_coatnet(self.backbone, rank=self.lora_rank)
 
         # --- Model Parameters ---
         c2, c3, c4 = 192, 384, 768
         in_ch = cfg.dataset.image_channel_num
         num_classes = cfg.dataset.num_classes
 
-        # --- Adapters with DropBlock ---
+        # --- Adapters (Still trainable as they are shallow) ---
         self.proj_sv1 = nn.Conv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
         self.adapt_sv1 = nn.Sequential(
             nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(in_ch),
-            nn.GELU(),
-            DropBlock2d(self.drop_block_p, block_size=7) # Retained for regularization
+            nn.BatchNorm2d(in_ch), nn.GELU(),
+            DropBlock2d(self.drop_block_p, block_size=7)
         )
-
         self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         self.adapt_sv2 = nn.Sequential(
             nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(in_ch),
-            nn.GELU(),
+            nn.BatchNorm2d(in_ch), nn.GELU(),
             DropBlock2d(self.drop_block_p, block_size=7)
         )
 
         # --- Side-ViT Ensembles ---
-        self.sidevit1 = side_vit1
-        self.sidevit2 = side_vit2
-        self.side_vit_cnn = side_vit_cnn
+        self.sidevit1, self.sidevit2, self.side_vit_cnn = side_vit1, side_vit2, side_vit_cnn
         
-        # 🔥 Simple, low-parameter MLP Head
-        vit_out_features = 2  # Assuming 2 features per side-ViT
-        total_vit_features = vit_out_features * 3 # 6 total features
-        
-        # A small hidden dimension reduces parameters significantly
-        mlp_hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12) 
-
+        # 🔥 2. Ultra-minimalist classification head
+        vit_out_features = 2
+        total_vit_features = vit_out_features * 3
         self.mlp = nn.Sequential(
-            nn.Linear(total_vit_features, mlp_hidden_dim),
-            nn.GELU(),
-            nn.Dropout(self.head_dropout),
-            nn.Linear(mlp_hidden_dim, num_classes)
+            nn.LayerNorm(total_vit_features),
+            nn.Linear(total_vit_features, num_classes)
         )
 
     def forward(self, x: torch.Tensor, K_value=None, Q_value=None) -> torch.Tensor:
-        # 1) Backbone Feature Extraction
+        # Backbone Feature Extraction
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[2], features[3], features[4]
 
-        # 2) Prepare inputs for Side-ViTs
+        # Prepare inputs for Side-ViTs
         f3_up = F.interpolate(f3, size=f2.shape[-2:], mode='bilinear', align_corners=False)
         feats23 = torch.cat([f2, f3_up], dim=1)
         sv1_in = self.adapt_sv1(self.proj_sv1(feats23))
-        
         sv2_in = self.adapt_sv2(self.proj_sv2(f4))
 
-        # 3) Forward through Side-ViTs
+        # Forward through Side-ViTs
         vit_out1 = self.sidevit1(F.interpolate(sv1_in, size=(128, 128), mode='bilinear', align_corners=False), K_value, Q_value)
         vit_out2 = self.sidevit2(F.interpolate(sv2_in, size=(128, 128), mode='bilinear', align_corners=False), K_value, Q_value)
         vit_out3 = self.side_vit_cnn(x, K_value, Q_value)
 
-        # 4) Simple Concatenation and MLP Classification
+        # Simple Concatenation and MLP Classification
         combined = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
         logits = self.mlp(combined)
         
