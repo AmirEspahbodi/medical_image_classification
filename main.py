@@ -61,7 +61,7 @@ def main(cfg):
             side_vit2=side_vit_model2,
             cfg=cfg,
         ).to(cfg.base.device)
-    elif cfg.network.model in ["coatnet_3"]:
+    elif cfg.network.model in ["coatnet_4"]:
         frozen_encoder3, side_vit_model_3 = generate_model(cfg)
         del frozen_encoder3
 
