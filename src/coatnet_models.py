@@ -528,35 +528,40 @@ class GatedAttentionModule(nn.Module):
         return output
 
 class SpatialCrossAttention(nn.Module):
+    """
+    Fuses a processed feature map (query) with a raw image (context) using spatial
+    cross-attention. This allows the model to use semantic context to select relevant
+    details from the raw image before feeding the result to a Side-ViT.
+    """
     def __init__(self, query_channels: int, context_channels: int, output_channels: int):
         super().__init__()
-        # Use a smaller intermediate dimension for efficiency
-        inter_channels = query_channels // 2
-        
-        # Convolutions to generate Query, Key, Value from inputs
+        inter_channels = query_channels // 2 if query_channels > 1 else 1
         self.query_conv = nn.Conv2d(query_channels, inter_channels, kernel_size=1)
         self.key_conv = nn.Conv2d(context_channels, inter_channels, kernel_size=1)
         self.value_conv = nn.Conv2d(context_channels, query_channels, kernel_size=1)
-        
-        # Final projection layer
         self.proj_conv = nn.Conv2d(query_channels, output_channels, kernel_size=1)
-        self.norm = nn.GroupNorm(1, output_channels) # Using GroupNorm for stability
+        self.norm = nn.GroupNorm(1, output_channels)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, query_feat: torch.Tensor, context_feat: torch.Tensor) -> torch.Tensor:
         B, C_q, H, W = query_feat.shape
         
+        # [FIX] Resize context to match query's spatial dimensions internally
+        context_feat_resized = F.interpolate(context_feat, size=(H, W), mode='bilinear', align_corners=False)
+        
         # Generate Q, K, V
         q = self.query_conv(query_feat).view(B, -1, H * W).permute(0, 2, 1) # (B, H*W, C_inter)
-        k = self.key_conv(context_feat).view(B, -1, H * W) # (B, C_inter, H*W)
-        v = self.value_conv(context_feat).view(B, -1, H * W) # (B, C_q, H*W)
+        k = self.key_conv(context_feat_resized).view(B, -1, H * W)        # (B, C_inter, H*W)
+        v = self.value_conv(context_feat_resized).view(B, -1, H * W)        # (B, C_q, H*W)
         
         # Calculate attention scores
-        attention_scores = torch.bmm(q, k) # (B, H*W, H*W)
+        # q: (B, H*W, C_inter), k: (B, C_inter, H*W) -> scores: (B, H*W, H*W)
+        attention_scores = torch.bmm(q, k)
         attention_probs = self.softmax(attention_scores)
         
         # Apply attention to Value
-        attended_v = torch.bmm(v, attention_probs.permute(0, 2, 1)) # (B, C_q, H*W)
+        # v: (B, C_q, H*W), probs.T: (B, H*W, H*W) -> attended: (B, C_q, H*W)
+        attended_v = torch.bmm(v, attention_probs.permute(0, 2, 1))
         attended_v = attended_v.view(B, C_q, H, W)
         
         # Add residual connection and project
@@ -576,9 +581,7 @@ class CrossAttentionFusion(nn.Module):
 
     def forward(self, query_feat: torch.Tensor, context_feat: torch.Tensor) -> torch.Tensor:
         query_feat_seq = query_feat.unsqueeze(1)
-        # Context needs to be a sequence of items to attend to
         context_feat_seq = context_feat.view(query_feat.shape[0], -1, query_feat.shape[-1])
-        
         attn_output, _ = self.attention(query=query_feat_seq, key=context_feat_seq, value=context_feat_seq)
         fused_feat = attn_output.squeeze(1)
         return self.norm(fused_feat + query_feat)
@@ -630,41 +633,32 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             nn.Linear(self.num_classes * 2, self.num_classes)
         )
 
-    def forward(self, x: torch.Tensor,key_states, value_states) -> torch.Tensor:
-        # --- 1. Backbone Feature Extraction ---
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor: # Accept extra args to match user's call
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[1], features[2], features[3]
 
-        # --- 2. Prepare Processed Features (Queries) ---
         proc_feat1 = self.gate1(f2, f3)
         proc_feat2 = self.gate2(f3, f4)
         proc_feat3 = self.proj3(f4)
         
-        # --- 3. Fuse with Raw Image and Feed to Side-ViTs ---
-        x_resized = F.interpolate(x, size=(proc_feat1.shape[-2], proc_feat1.shape[-1]), mode='bilinear', align_corners=False)
-
-        vit_input1 = self.spatial_fusion1(proc_feat1, x_resized)
-        vit_input2 = self.spatial_fusion2(proc_feat2, x_resized)
-        vit_input3 = self.spatial_fusion3(proc_feat3, x_resized)
+        # [FIX] Pass raw image 'x' directly. Resizing is now handled inside SpatialCrossAttention.
+        vit_input1 = self.spatial_fusion1(proc_feat1, x)
+        vit_input2 = self.spatial_fusion2(proc_feat2, x)
+        vit_input3 = self.spatial_fusion3(proc_feat3, x)
         
-        # Interpolate to final ViT input size (128x128)
         vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input2 = F.interpolate(vit_input2, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # --- 4. Forward through Side-ViTs ---
-        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
-        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
-        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
+        vit_out1 = self.side_vit1(vit_input1)
+        vit_out2 = self.side_vit2(vit_input2)
+        vit_out3 = self.side_vit3(vit_input3)
         
-        # --- 5. Fuse Side-ViT Outputs ---
         context_features = torch.stack([vit_out2, vit_out3], dim=1)
         fused_output = self.output_fusion(vit_out1, context_features)
         
-        # --- 6. Final Classification ---
         logits = self.classifier_head(fused_output)
-        
         return logits
 
 
