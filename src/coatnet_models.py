@@ -451,7 +451,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         pooled_feat = self.pool(combined_feat).flatten(1)
         return pooled_feat
 
-    def forward(self, x):
+    def forward(self, x, K_state, Q_state):
         # 1. Extract feature maps from the CNN backbone
         f2, f3, f4 = self.cnn_backbone(x)
 
@@ -470,13 +470,13 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
         attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
         reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
-        vit_features1 = self.side_vit1(reconstructed_img1)
+        vit_features1 = self.side_vit1(reconstructed_img1, K_state, Q_state)
 
         # --- Stream 2 ---
         attended_patches2 = self.fusion_stream2(image_patches, stream2_vec)
         attended_patches2 = self.norm_attended_patch2(attended_patches2 + image_patches) # Residual
         reconstructed_img2 = self.reconstruct_from_patches(attended_patches2, H, W)
-        vit_features2 = self.side_vit2(reconstructed_img2)
+        vit_features2 = self.side_vit2(reconstructed_img2, K_state, Q_state)
 
         # 5. Concatenate features and classify with the FC head
         combined_features = torch.cat([vit_features1, vit_features2], dim=1)
