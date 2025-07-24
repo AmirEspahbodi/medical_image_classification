@@ -11,7 +11,7 @@ from train import train, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3
+from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3, CoAtNetSideViTClassifier_4
 from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2, ResnetSideViTClassifier_3
 
 
@@ -69,6 +69,8 @@ def main(cfg):
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_1
             case "coatnet_2":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_2
+            case "coatnet_4":
+                EnhancedSideViTClassifier = CoAtNetSideViTClassifier_4
             case "resnet_1":
                 EnhancedSideViTClassifier = ResNetSideViTClassifier_1
             case "resnet_2":
