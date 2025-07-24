@@ -308,3 +308,182 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         combined = torch.cat([out1, out2, out3], dim=1)
         logits = self.mlp(combined)
         return logits
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+class MultiScaleCoAtNetBackbone(nn.Module):
+    """
+    CNN Backbone using a pre-trained CoAtNet.
+    The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
+    """
+    def __init__(self, model_name=BACKBONE_MODEL, pretrained=True):
+        super().__init__()
+        self.model = timm.create_model(
+            model_name,
+            pretrained=pretrained,
+            in_chans=3,
+            features_only=True,
+            out_indices=(2, 3, 4) # We need blocks 2, 3, and 4
+        )
+
+        # --- Freeze the backbone parameters ---
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
+        print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
+        feature_info = self.model.feature_info.channels()
+        print(f"    Feature map channels extracted: {[feature_info[1], feature_info[2], feature_info[3]]}")
+
+    def forward(self, x):
+        """
+        Processes the input image and returns the last three feature maps.
+        """
+        with torch.no_grad():
+            feature_maps = self.model(x)
+        return feature_maps
+
+
+class CrossAttentionFusion(nn.Module):
+    """
+    Advanced feature fusion module.
+    """
+    def __init__(self, cnn_embed_dim, vit_patch_dim, num_heads, dropout):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = vit_patch_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.to_q = nn.Linear(vit_patch_dim, vit_patch_dim, bias=False)
+        self.to_kv = nn.Linear(cnn_embed_dim, vit_patch_dim * 2, bias=False)
+        self.proj = nn.Linear(vit_patch_dim, vit_patch_dim)
+        self.proj_drop = nn.Dropout(dropout)
+
+    def forward(self, image_patches, cnn_feature_vector):
+        B, N, C = image_patches.shape
+        q = self.to_q(image_patches).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        cnn_features_seq = cnn_feature_vector.unsqueeze(1)
+        kv = self.to_kv(cnn_features_seq).reshape(B, 1, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class DualStreamHybridNetwork(nn.Module):
+    """
+    A dual-stream hybrid model that uses a final FC head for classification.
+
+    Architecture:
+    1. A frozen CoAtNet backbone extracts features from blocks 2, 3, and 4.
+    2. Two parallel attention streams are created:
+       - Stream 1: Fuses features from Blocks 2 & 3.
+       - Stream 2: Fuses features from Blocks 3 & 4.
+    3. Each stream uses a Side-ViT to produce a feature vector.
+    4. The two feature vectors are concatenated.
+    5. A final FC classification head produces the logits.
+    """
+    def __init__(self,
+        side_vit1: nn.Module,
+        side_vit2: nn.Module,
+        cfg: Any,
+        pretrained: bool = True,
+        ):
+        super().__init__()
+        NUM_CLASSES = cfg.dataset.num_classe
+        IMG_SIZE = 128
+        
+        BACKBONE_MODEL = 'coatnet_0_rw_224'
+        VIT_PATCH_SIZE = 16 # Assumed patch size for the ViTs
+        NUM_HEADS = 8 # Number of heads for cross-attention
+        DROPOUT_RATE = 0.3 # Increased dropout for more regularization
+        
+        # Feature dimensions from CoAtNet-0 blocks (stages 1, 2, 3, 4)
+        COATNET_DIMS = [96, 192, 384, 768]
+        SIDE_VIT_OUT_DIM = 2
+                     
+        self.patch_size = vit_patch_size
+        self.num_patches = (IMG_SIZE // vit_patch_size) ** 2
+        self.patch_dim = IMG_CHANNELS * vit_patch_size * vit_patch_size
+        # --- Core Components ---
+        self.cnn_backbone = MultiScaleCoAtNetBackbone(pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
+
+        # Define the combined feature dimensions for each stream
+        stream1_dim = COATNET_DIMS[1] + COATNET_DIMS[2] # 192 + 384 = 576
+        stream2_dim = COATNET_DIMS[2] + COATNET_DIMS[3] # 384 + 768 = 1152
+
+        # --- Stream 1 Components (Blocks 2+3) ---
+        self.fusion_stream1 = CrossAttentionFusion(stream1_dim, self.patch_dim, num_heads, dropout)
+        self.side_vit1 = SideViTFeatureExtractor(SIDE_VIT_OUT_DIM)
+
+        # --- Stream 2 Components (Blocks 3+4) ---
+        self.fusion_stream2 = CrossAttentionFusion(stream2_dim, self.patch_dim, num_heads, dropout)
+        self.side_vit2 = SideViTFeatureExtractor(SIDE_VIT_OUT_DIM)
+        
+        # --- Final Classification Head ---
+        self.classification_head = nn.Sequential(
+            nn.LayerNorm(SIDE_VIT_OUT_DIM * 2),
+            nn.Linear(SIDE_VIT_OUT_DIM * 2, 16),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(16, num_classes)
+        )
+
+        # --- Utility Layers ---
+        self.patchify = nn.Conv2d(IMG_CHANNELS, self.patch_dim, kernel_size=vit_patch_size, stride=vit_patch_size)
+        self.unpatchify = nn.ConvTranspose2d(self.patch_dim, IMG_CHANNELS, kernel_size=vit_patch_size, stride=vit_patch_size)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.norm_patch = nn.LayerNorm(self.patch_dim)
+        self.norm_attended_patch1 = nn.LayerNorm(self.patch_dim)
+        self.norm_attended_patch2 = nn.LayerNorm(self.patch_dim)
+
+    def process_feature_pair(self, feat_shallow, feat_deep):
+        """Helper to upsample, concatenate, and pool a pair of feature maps."""
+        feat_deep_upsampled = F.interpolate(
+            feat_deep, size=feat_shallow.shape[2:], mode='bilinear', align_corners=False
+        )
+        combined_feat = torch.cat([feat_shallow, feat_deep_upsampled], dim=1)
+        pooled_feat = self.pool(combined_feat).flatten(1)
+        return pooled_feat
+
+    def forward(self, x):
+        # 1. Extract feature maps from the CNN backbone
+        f2, f3, f4 = self.cnn_backbone(x)
+
+        # 2. Process feature pairs for each stream
+        stream1_vec = self.process_feature_pair(f2, f3)
+        stream2_vec = self.process_feature_pair(f3, f4)
+
+        # 3. Convert input image to a sequence of patches
+        image_patches_raw = self.patchify(x)
+        B, C, H, W = image_patches_raw.shape
+        image_patches = image_patches_raw.flatten(2).transpose(1, 2)
+        image_patches = self.norm_patch(image_patches)
+
+        # 4. Process through the two parallel attention streams
+        # --- Stream 1 ---
+        attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
+        attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
+        reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
+        vit_features1 = self.side_vit1(reconstructed_img1)
+
+        # --- Stream 2 ---
+        attended_patches2 = self.fusion_stream2(image_patches, stream2_vec)
+        attended_patches2 = self.norm_attended_patch2(attended_patches2 + image_patches) # Residual
+        reconstructed_img2 = self.reconstruct_from_patches(attended_patches2, H, W)
+        vit_features2 = self.side_vit2(reconstructed_img2)
+
+        # 5. Concatenate features and classify with the FC head
+        combined_features = torch.cat([vit_features1, vit_features2], dim=1)
+        final_logits = self.classification_head(combined_features)
+
+        return final_logits
+
+    def reconstruct_from_patches(self, patches, height, width):
+        """Helper function to turn patches back into an image-like tensor."""
+        patches_reshaped = patches.transpose(1, 2).reshape(patches.shape[0], self.patch_dim, height, width)
+        reconstructed_img = self.unpatchify(patches_reshaped)
+        return reconstructed_img
