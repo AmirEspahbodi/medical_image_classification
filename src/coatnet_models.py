@@ -417,11 +417,11 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         stream2_dim = COATNET_DIMS[2] + COATNET_DIMS[3] # 384 + 768 = 1152
 
         # --- Stream 1 Components (Blocks 2+3) ---
-        self.fusion_stream1 = CrossAttentionFusion(stream1_dim, self.patch_dim, NUM_HEADS, dropout)
+        self.fusion_stream1 = CrossAttentionFusion(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit1 = side_vit1
 
         # --- Stream 2 Components (Blocks 3+4) ---
-        self.fusion_stream2 = CrossAttentionFusion(stream2_dim, self.patch_dim, NUM_HEADS, dropout)
+        self.fusion_stream2 = CrossAttentionFusion(stream2_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit2 = side_vit2
         
         # --- Final Classification Head ---
@@ -429,7 +429,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
             nn.LayerNorm(SIDE_VIT_OUT_DIM * 2),
             nn.Linear(SIDE_VIT_OUT_DIM * 2, 16),
             nn.ReLU(),
-            nn.Dropout(dropout),
+            nn.Dropout(DROPOUT_RATE),
             nn.Linear(16, num_classes)
         )
 
