@@ -682,7 +682,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
-            drop_path_rate=0.2
+            drop_path_rate=cfg.model.drop_path_rate
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
@@ -690,17 +690,18 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         feat_dims = self.backbone.feature_info.channels()
         c2, c3, c4 = feat_dims[1], feat_dims[2], feat_dims[3]
 
-        # Feature preparation paths now project down to a single channel
+        # [FIX] Project processed features to 3 channels to match the expected input
         self.gate1 = GatedAttentionModule(c2, c3, 64)
-        self.proj1 = nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
+        self.proj1 = nn.Conv2d(64, 3, kernel_size=1)
         
         self.gate2 = GatedAttentionModule(c3, c4, 64)
-        self.proj2 = nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
+        self.proj2 = nn.Conv2d(64, 3, kernel_size=1)
 
         self.proj3_seq = nn.Sequential(
             nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.Conv2d(64, cfg.dataset.image_channel_num, kernel_size=1)
+            nn.Conv2d(64, 3, kernel_size=1)
         )
+        
         
         # Side-ViTs now expect 2 channels: 1 from processed features, 1 from raw image
         self.side_vit1, self.side_vit2, self.side_vit3 = side_vit1, side_vit2, side_vit3
