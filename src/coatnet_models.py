@@ -29,9 +29,8 @@ class CoAtNetSideViTClassifier_1(nn.Module):
             'coatnet_0_rw_224',
             pretrained=pretrained,
             features_only=True,
-            drop_rate=0.1,           # global dropout
-            attn_drop_rate=0.1,      # attention dropout
-            drop_path_rate=0.2       # stochastic depth
+            drop_rate=0.1,
+            drop_path_rate=0.2
         )
         # Freeze early layers, fine-tune later ones
         for name, param in self.backbone.named_parameters():
