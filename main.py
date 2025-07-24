@@ -52,26 +52,37 @@ def main(cfg):
     print(f"type cfg = {type(cfg)}")
     frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
     del frozen_encoder3
-    match cfg.network.model:
-        case "coatnet_1":
-            EnhancedSideViTClassifier = CoAtNetSideViTClassifier_1
-        case "coatnet_2":
-            EnhancedSideViTClassifier = CoAtNetSideViTClassifier_2
-        case "resnet_1":
-            EnhancedSideViTClassifier = ResNetSideViTClassifier_1
-        case "resnet_2":
-            EnhancedSideViTClassifier = ResNetSideViTClassifier_2
-        case "resnet_3":
-            EnhancedSideViTClassifier = ResnetSideViTClassifier_3
-        case _:
-            raise RuntimeError()
-    classifier_with_side_vits = EnhancedSideViTClassifier(
-        side_vit1=side_vit_model1,
-        side_vit2=side_vit_model2,
-        side_vit_cnn=side_vit_model_cnn,
-        cfg=cfg,
-        # pretrained=True,
-    ).to(cfg.base.device)
+    if model in ["coatnet_3"]:
+        match cfg.network.model:
+            case "coatnet_2":
+                EnhancedSideViTClassifier = CoAtNetSideViTClassifier_3
+            case _:
+                raise RuntimeError()
+        classifier_with_side_vits = EnhancedSideViTClassifier(
+            side_vit1=side_vit_model1,
+            side_vit2=side_vit_model2,
+            cfg=cfg,
+        ).to(cfg.base.device)
+    else:
+        match cfg.network.model:
+            case "coatnet_1":
+                EnhancedSideViTClassifier = CoAtNetSideViTClassifier_1
+            case "coatnet_2":
+                EnhancedSideViTClassifier = CoAtNetSideViTClassifier_2
+            case "resnet_1":
+                EnhancedSideViTClassifier = ResNetSideViTClassifier_1
+            case "resnet_2":
+                EnhancedSideViTClassifier = ResNetSideViTClassifier_2
+            case "resnet_3":
+                EnhancedSideViTClassifier = ResnetSideViTClassifier_3
+            case _:
+                raise RuntimeError()
+        classifier_with_side_vits = EnhancedSideViTClassifier(
+            side_vit1=side_vit_model1,
+            side_vit2=side_vit_model2,
+            side_vit_cnn=side_vit_model_cnn,
+            cfg=cfg,
+        ).to(cfg.base.device)
 
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
     train(
