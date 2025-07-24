@@ -15,7 +15,7 @@ from timm.layers import DropPath
 from timm.layers.std_conv import StdConv2d
 from typing import Any
 
-class RegCoAtNetSideViTClassifier(nn.Module):
+class CoAtNetSideViTClassifier_1(nn.Module):
     """
     Enhanced CoAtNet + Side-ViT ensemble with advanced regularization to reduce overfitting:
       - Stochastic depth (DropPath) in backbone
