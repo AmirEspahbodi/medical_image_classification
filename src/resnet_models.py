@@ -197,7 +197,7 @@ class DropPath(nn.Module):
         random_tensor.floor_()
         return x.div(keep_prob) * random_tensor
 
-class ResnetSideViTClassifier_3_Robust(nn.Module):
+class ResnetSideViTClassifier_3(nn.Module):
     def __init__(
         self,
         side_vit1: nn.Module,
