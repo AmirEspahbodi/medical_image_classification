@@ -82,7 +82,7 @@ def main(cfg):
         classifier_with_side_vits = EnhancedSideViTClassifier(
             side_vit1=side_vit_model1,
             side_vit2=side_vit_model2,
-            side_vit_cnn=side_vit_model_cnn,
+            side_vit3=side_vit_model_cnn,
             cfg=cfg,
         ).to(cfg.base.device)
 
