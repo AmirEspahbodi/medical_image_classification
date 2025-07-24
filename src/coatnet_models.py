@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 from torchvision import models
-from typing import Any, Tuple
+from typing import Any, Tuple, Optional
 from timm.models.layers import DropPath, create_conv2d
 from timm.layers.std_conv import StdConv2d
 from timm.layers import DropBlock2d, Mlp
