@@ -312,7 +312,7 @@ class CoAtNetSideViTClassifier_2(nn.Module):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
-class CoAtNetSideViTClassifier_3(nn.Module):
+class MultiScaleCoAtNetBackbone(nn.Module):
     """
     CNN Backbone using a pre-trained CoAtNet.
     The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
@@ -373,7 +373,7 @@ class CrossAttentionFusion(nn.Module):
         return x
 
 
-class DualStreamHybridNetwork(nn.Module):
+class CoAtNetSideViTClassifier_3(nn.Module):
     """
     A dual-stream hybrid model that uses a final FC head for classification.
 
