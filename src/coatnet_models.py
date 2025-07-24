@@ -728,7 +728,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         features = self.backbone(x_backbone)
         f2, f3, f4 = features[1], features[2], features[3]
 
-        # Prepare single-channel processed features
+        # Prepare 3-channel processed features
         proc_feat1 = self.proj1(self.gate1(f2, f3))
         proc_feat2 = self.proj2(self.gate2(f3, f4))
         proc_feat3 = self.proj3_seq(f4)
@@ -740,10 +740,14 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         proc_feat3_res = F.interpolate(proc_feat3, size=vit_input_size, mode='bilinear', align_corners=False)
         x_resized = F.interpolate(x, size=vit_input_size, mode='bilinear', align_corners=False)
 
-        # Concatenate along the channel dimension
-        vit_input1 = torch.cat([proc_feat1_res, x_resized], dim=1)
-        vit_input2 = torch.cat([proc_feat2_res, x_resized], dim=1)
-        vit_input3 = torch.cat([proc_feat3_res, x_resized], dim=1)
+        # [FIX] Fuse by addition instead of concatenation to maintain 3 channels
+        vit_input1 = proc_feat1_res + x_resized
+        vit_input2 = proc_feat2_res + x_resized
+        vit_input3 = proc_feat3_res + x_resized
+
+        vit_out1 = self.side_vit1(vit_input1,key_states, value_states)
+        vit_out2 = self.side_vit2(vit_input2,key_states, value_states)
+        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         print(f"x.shape = {x.shape}")
         print(f"vit_input1.shape = {vit_input1.shape}")
         vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
