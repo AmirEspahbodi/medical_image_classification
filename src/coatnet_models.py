@@ -322,7 +322,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         self.model = timm.create_model(
             model_name,
             pretrained=pretrained,
-            in_chans=3,
+            in_chans=in_chans,
             features_only=True,
             out_indices=(2, 3, 4) # We need blocks 2, 3, and 4
         )
@@ -334,7 +334,8 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
         print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
         feature_info = self.model.feature_info.channels()
-        print(f"    Feature map channels extracted: {[feature_info[1], feature_info[2], feature_info[3]]}")
+        # Corrected print statement to avoid IndexError
+        print(f"    Feature map channels extracted: {feature_info}")
 
     def forward(self, x):
         """
