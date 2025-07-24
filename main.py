@@ -52,7 +52,7 @@ def main(cfg):
     print(f"type cfg = {type(cfg)}")
     frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
     del frozen_encoder3
-    if model in ["coatnet_3"]:
+    if cfg.network.model in ["coatnet_3"]:
         match cfg.network.model:
             case "coatnet_3":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_3
