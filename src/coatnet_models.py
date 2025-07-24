@@ -10,8 +10,8 @@ class CoAtNetSideViTClassifier_1(nn.Module):
     """
     Enhanced CoAtNet + Side-ViT ensemble with advanced regularization to reduce overfitting:
       - DropPath (stochastic depth) in backbone
-      - Attention & feature dropout
-      - Weight-standardized convolutions
+      - Feature dropout
+      - Weight-standardized convolutions (StdConv2d)
       - Squeeze-and-Excitation adapters
       - LayerNorm & strong dropout in MLP head
     """
@@ -41,25 +41,25 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         in_ch = cfg.dataset.image_channel_num  # e.g. 3 for RGB
 
         # --- Projection + Adapter for Side-ViT inputs with SE & weight-standardized conv ---
-        def make_adapter(in_c):
+        def make_adapter(channels):
             return nn.Sequential(
-                create_conv2d(in_c, in_c, kernel_size=3, padding=1, bias=False, \
-                              conv_cfg=dict(name='StdConv')),  # weight-standardized conv
-                nn.BatchNorm2d(in_c),
+                StdConv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(channels),
                 nn.ReLU(inplace=True),
                 # Squeeze-and-Excitation block
                 nn.AdaptiveAvgPool2d(1),
-                nn.Conv2d(in_c, in_c // 16, 1),
+                nn.Conv2d(channels, channels // 16, 1),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(in_c // 16, in_c, 1),
+                nn.Conv2d(channels // 16, channels, 1),
                 nn.Sigmoid(),
                 nn.Dropout2d(p=0.4)
             )
 
-        self.proj_sv1 = create_conv2d(c2 + c3, in_ch, kernel_size=1, bias=False, conv_cfg=dict(name='StdConv'))
+        # 1x1 projections
+        self.proj_sv1 = StdConv2d(c2 + c3, in_ch, kernel_size=1, bias=False)
         self.adapt_sv1 = make_adapter(in_ch)
 
-        self.proj_sv2 = create_conv2d(c4, in_ch, kernel_size=1, bias=False, conv_cfg=dict(name='StdConv'))
+        self.proj_sv2 = StdConv2d(c4, in_ch, kernel_size=1, bias=False)
         self.adapt_sv2 = make_adapter(in_ch)
 
         # Side-ViT ensembles (treated as black boxes)
@@ -67,7 +67,7 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         self.sidevit2 = side_vit2
         self.side_vit_cnn = side_vit_cnn
 
-        # Final MLP head with LayerNorm, dropout, label smoothing support
+        # Final MLP head with LayerNorm, dropout
         hidden_dim = getattr(cfg, 'mlp_hidden_dim', 12)
         self.norm = nn.LayerNorm(6)
         self.head = nn.Sequential(
@@ -88,7 +88,6 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         cat23 = torch.cat([f2, f3_up], dim=1)
         sv1 = self.proj_sv1(cat23)
         sv1 = F.interpolate(sv1, size=(128, 128), mode='bilinear', align_corners=False)
-        # SE-adapter + stochastic depth
         sv1 = self.adapt_sv1(sv1)
 
         # 3) SV2: high-level
@@ -105,10 +104,11 @@ class CoAtNetSideViTClassifier_1(nn.Module):
         out3 = self.side_vit_cnn(sv3, K_value, Q_value)
 
         # 6) Fusion + classification
-        combined = torch.cat([out1, out2, out3], dim=1)  # shape [B,6?]
+        combined = torch.cat([out1, out2, out3], dim=1)
         combined = self.norm(combined)
         logits = self.head(combined)
         return logits
+
 
 
 ## -----------------------------------------------------------------------------------------
