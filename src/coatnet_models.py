@@ -612,9 +612,9 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         )
         
         # --- Spatial Cross-Attention Fusion for ViT Inputs ---
-        self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
-        self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
-        self.spatial_fusion3 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, 1)
+        self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
+        self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
+        self.spatial_fusion3 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
         
         # --- Side-ViT Modules ---
         self.side_vit1 = side_vit1
