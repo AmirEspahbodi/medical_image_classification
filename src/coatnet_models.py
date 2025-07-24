@@ -312,7 +312,7 @@ class CoAtNetSideViTClassifier_2(nn.Module):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
-class MultiScaleCoAtNetBackbone(nn.Module):
+class CoAtNetSideViTClassifier_3(nn.Module):
     """
     CNN Backbone using a pre-trained CoAtNet.
     The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
