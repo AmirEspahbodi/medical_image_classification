@@ -630,7 +630,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             nn.Linear(self.num_classes * 2, self.num_classes)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor,key_states, value_states) -> torch.Tensor:
         # --- 1. Backbone Feature Extraction ---
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
