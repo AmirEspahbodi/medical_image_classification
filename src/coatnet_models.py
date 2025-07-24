@@ -201,7 +201,7 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         feat = self.backbone.feature_info
         c2, c3, c4 = feat[2]['num_chs'], feat[3]['num_chs'], feat[4]['num_chs']
         in_ch = cfg.dataset.image_channel_num
-        num_classes = 4
+        num_classes = 2
         fusion_dim = getattr(cfg, 'fpn_fusion_dim', 64)
 
         self.fpn_fusion = LightweightFPNFusion(
