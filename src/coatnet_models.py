@@ -216,7 +216,7 @@ class LightweightFPNFusion(nn.Module):
 
 # --- Main Model: Enhanced for Regularization ---
 
-class CoAtNetSideViTClassifier_V3(nn.Module):
+class CoAtNetSideViTClassifier_2(nn.Module):
     def __init__(
         self,
         side_vit1,
