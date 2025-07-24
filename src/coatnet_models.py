@@ -405,7 +405,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         COATNET_DIMS = [96, 192, 384, 768]
         SIDE_VIT_OUT_DIM = 2
                      
-        self.patch_size = vit_patch_size
+        self.patch_size = VIT_PATCH_SIZE
         self.num_patches = (IMG_SIZE // vit_patch_size) ** 2
         self.patch_dim = IMG_CHANNELS * vit_patch_size * vit_patch_size
         # --- Core Components ---
