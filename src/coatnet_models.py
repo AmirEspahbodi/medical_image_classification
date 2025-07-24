@@ -417,11 +417,11 @@ class DualStreamHybridNetwork(nn.Module):
 
         # --- Stream 1 Components (Blocks 2+3) ---
         self.fusion_stream1 = CrossAttentionFusion(stream1_dim, self.patch_dim, num_heads, dropout)
-        self.side_vit1 = SideViTFeatureExtractor(SIDE_VIT_OUT_DIM)
+        self.side_vit1 = side_vit1
 
         # --- Stream 2 Components (Blocks 3+4) ---
         self.fusion_stream2 = CrossAttentionFusion(stream2_dim, self.patch_dim, num_heads, dropout)
-        self.side_vit2 = SideViTFeatureExtractor(SIDE_VIT_OUT_DIM)
+        self.side_vit2 = side_vit2
         
         # --- Final Classification Head ---
         self.classification_head = nn.Sequential(
