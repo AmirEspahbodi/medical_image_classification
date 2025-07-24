@@ -622,15 +622,22 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         self.side_vit3 = side_vit3
 
         # --- Fusion of Side-ViT Outputs ---
-        self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
-        
+        # self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
+
+        # self.classifier_head = nn.Sequential(
+        #     nn.LayerNorm(self.num_classes),
+        #     nn.Linear(self.num_classes, self.num_classes * 2),
+        #     nn.GELU(),
+        #     nn.Dropout(0.2),
+        #     nn.Linear(self.num_classes * 2, self.num_classes)
+        # )
         # --- Final Classifier Head ---
         self.classifier_head = nn.Sequential(
             nn.LayerNorm(self.num_classes),
-            nn.Linear(self.num_classes, self.num_classes * 2),
+            nn.Linear(self.num_classes, self.num_classes * 3 * 2),
             nn.GELU(),
             nn.Dropout(0.2),
-            nn.Linear(self.num_classes * 2, self.num_classes)
+            nn.Linear(self.num_classes * 3 * 2, self.num_classes)
         )
 
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor: # Accept extra args to match user's call
@@ -655,10 +662,10 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
-        context_features = torch.stack([vit_out2, vit_out3], dim=1)
-        fused_output = self.output_fusion(vit_out1, context_features)
-        
-        logits = self.classifier_head(fused_output)
+        # context_features = torch.stack([vit_out2, vit_out3], dim=1)
+        # fused_output = self.output_fusion(vit_out1, context_features)
+        features = torch.stack([vit_out1, vit_out2, vit_out3], dim=1)
+        logits = self.classifier_head(features)
         return logits
 
 
