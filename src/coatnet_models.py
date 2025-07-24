@@ -5,6 +5,7 @@ import timm
 from torchvision import models
 from typing import Any, Tuple
 from timm.models.layers import DropPath, create_conv2d
+from timm.layers.std_conv import StdConv2d
 
 class CoAtNetSideViTClassifier_1(nn.Module):
     """
