@@ -50,7 +50,6 @@ def main(cfg):
     del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    del frozen_encoder3
     if cfg.network.model in ["coatnet_3"]:
         match cfg.network.model:
             case "coatnet_3":
@@ -64,6 +63,8 @@ def main(cfg):
         ).to(cfg.base.device)
     elif cfg.network.model in ["coatnet_3"]:
         frozen_encoder3, side_vit_model_3 = generate_model(cfg)
+        del frozen_encoder3
+
         match cfg.network.model:
             case "coatnet_4":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_4
@@ -77,6 +78,8 @@ def main(cfg):
         ).to(cfg.base.device)
     else:
         frozen_encoder3, side_vit_model_cnn = generate_model(cfg,use_cnn=True)
+        del frozen_encoder3
+
         match cfg.network.model:
             case "coatnet_1":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_1
