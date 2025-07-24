@@ -317,7 +317,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
     CNN Backbone using a pre-trained CoAtNet.
     The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
     """
-    def __init__(self, model_name, pretrained=True):
+    def __init__(self, model_name, in_chans, pretrained=True):
         super().__init__()
         self.model = timm.create_model(
             model_name,
