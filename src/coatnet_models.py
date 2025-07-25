@@ -505,7 +505,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         vit_features3 = self.side_vit3(reconstructed_img3, key_states, value_states)
         # 5. Concatenate features and classify with the FC head
 # 
-        combined_features = torch.cat([vit_features1و vit_features2, vit_features3], dim=1)
+        combined_features = torch.cat([vit_features1, vit_features2, vit_features3], dim=1)
         final_logits = self.classification_head(combined_features)
 
         return final_logits
@@ -810,7 +810,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
         # fused_output = self.output_fusion(vit_out1, context_features)
         
-        features = torch.cat([vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
         logits = self.classifier_head(features)
         return logits
 
