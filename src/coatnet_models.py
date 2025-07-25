@@ -330,7 +330,11 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         # --- Freeze the backbone parameters ---
         for param in self.model.parameters():
             param.requires_grad = False
-        inject_lora_into_coatnet(self.model, rank=8)
+
+        # --- Fine-tuning Strategy (Unchanged) ---
+        # for name, param in self.model.named_parameters():
+        #     if any([f'blocks.{i}' in name for i in (2, 3)]):
+        #         param.requires_grad = True
         
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
         print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
@@ -391,6 +395,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
     def __init__(self,
         side_vit1: nn.Module,
         side_vit2: nn.Module,
+        side_vit3: nn.Module,
         cfg: Any,
         pretrained: bool = True,
         ):
@@ -409,14 +414,17 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         SIDE_VIT_OUT_DIM = 2
                      
         self.patch_size = VIT_PATCH_SIZE
-        self.num_patches = (IMG_SIZE // VIT_PATCH_SIZE) ** 2
+        self.num_patches = (IMG_SIZE // VIT_PATCH_SIZE) ** 3
         self.patch_dim = IMG_CHANNELS * VIT_PATCH_SIZE * VIT_PATCH_SIZE
         # --- Core Components ---
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
-        stream1_dim = COATNET_DIMS[1] + COATNET_DIMS[2] # 192 + 384 = 576
-        stream2_dim = COATNET_DIMS[2] + COATNET_DIMS[3] # 384 + 768 = 1152
+        stream1_dim = COATNET_DIMS[1] # 192 + 384 = 576
+        stream2_dim = COATNET_DIMS[2] # 384 + 768 = 1152
+        stream3_dim = COATNET_DIMS[3] # 384 + 768 = 1152
+
+
 
         # --- Stream 1 Components (Blocks 2+3) ---
         self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
@@ -425,11 +433,14 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         # --- Stream 2 Components (Blocks 3+4) ---
         self.fusion_stream2 = CrossAttentionFusion3(stream2_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit2 = side_vit2
-        
+
+        # --- Stream 2 Components (Blocks 3+4) ---
+        self.fusion_stream3 = CrossAttentionFusion3(stream3_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
+        self.side_vit3 = side_vit3
         # --- Final Classification Head ---
         self.classification_head = nn.Sequential(
-            nn.LayerNorm(SIDE_VIT_OUT_DIM * 2),
-            nn.Linear(SIDE_VIT_OUT_DIM * 2, 16),
+            nn.LayerNorm(SIDE_VIT_OUT_DIM * 3),
+            nn.Linear(SIDE_VIT_OUT_DIM * 3, 16),
             nn.ReLU(),
             nn.Dropout(DROPOUT_RATE),
             nn.Linear(16, NUM_CLASSES)
@@ -442,6 +453,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.norm_patch = nn.LayerNorm(self.patch_dim)
         self.norm_attended_patch1 = nn.LayerNorm(self.patch_dim)
         self.norm_attended_patch2 = nn.LayerNorm(self.patch_dim)
+        self.norm_attended_patch3 = nn.LayerNorm(self.patch_dim)
 
     def process_feature_pair(self, feat_shallow, feat_deep):
         """Helper to upsample, concatenate, and pool a pair of feature maps."""
@@ -461,8 +473,9 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
 
         # 2. Process feature pairs for each stream
-        stream1_vec = self.process_feature_pair(f2, f3)
-        stream2_vec = self.process_feature_pair(f3, f4)
+        stream1_vec = self.process_feature_pair(f2)
+        stream2_vec = self.process_feature_pair(f3)
+        stream3_vec = self.process_feature_pair(f4)
 
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
@@ -483,8 +496,12 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         reconstructed_img2 = self.reconstruct_from_patches(attended_patches2, H, W)
         vit_features2 = self.side_vit2(reconstructed_img2, key_states, value_states)
 
+        attended_patches3 = self.fusion_stream3(image_patches, stream3_vec)
+        attended_patches3 = self.norm_attended_patch3(attended_patches3 + image_patches) # Residual
+        reconstructed_img3 = self.reconstruct_from_patches(attended_patches3, H, W)
+        vit_features3 = self.side_vit3(reconstructed_img3, key_states, value_states)
         # 5. Concatenate features and classify with the FC head
-        combined_features = torch.cat([vit_features1, vit_features2], dim=1)
+        combined_features = torch.cat([vit_features1, vit_features2, vit_features3], dim=1)
         final_logits = self.classification_head(combined_features)
 
         return final_logits
