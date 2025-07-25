@@ -324,7 +324,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
             pretrained=pretrained,
             in_chans=in_chans,
             features_only=True,
-            out_indices=(2, 3, 4) # We need blocks 2, 3, and 4
+            out_indices=(1, 2, 3, 4) # We need blocks 2, 3, and 4
         )
 
         # --- Freeze the backbone parameters ---
@@ -470,15 +470,15 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         )
         
         # 1. Extract feature maps from the CNN backbone
-        f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
+        f1, f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
 
         # 2. Process feature pairs for each stream
-        # stream1_vec = self.process_feature_pair(f2)
-        # stream2_vec = self.process_feature_pair(f3)
-        # stream3_vec = self.process_feature_pair(f4)
-        stream1_vec = f2
-        stream2_vec = f3
-        stream3_vec = f4
+        stream1_vec = self.process_feature_pair(f1, f2)
+        stream2_vec = self.process_feature_pair(f2, f3)
+        stream3_vec = self.process_feature_pair(f3, f4)
+        # stream1_vec = f2
+        # stream2_vec = f3
+        # stream3_vec = f4
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
         B, C, H, W = image_patches_raw.shape
