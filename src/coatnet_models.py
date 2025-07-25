@@ -717,6 +717,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
                 param.requires_grad = True
 
         NUM_VIT_STREAMS = 2
+        in_ch = 3
         feat_dims = self.backbone.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
@@ -730,6 +731,9 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         self.gate3 = GatedAttentionModule(c3, c4, 64)
         self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
+        self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
+        self.proj_sv3 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
+        
         self.proj3_seq = nn.Sequential(
             nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
             nn.Conv2d(64, 3, kernel_size=1)
@@ -763,8 +767,11 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        proc_feat2 = self.proj2(self.gate2(f2, f3))
-        proc_feat3 = self.proj3(self.gate3(f3, f4))
+        # proc_feat2 = self.proj2(self.gate2(f2, f3))
+        # proc_feat3 = self.proj3(self.gate3(f3, f4))
+        proc_feat2 = self.proj_sv2(f3)
+        proc_feat3 = self.proj_sv3(f4)
+        
         
         # Downsample processed features and raw image to 64x64
         vit_input_size = (64, 64)
