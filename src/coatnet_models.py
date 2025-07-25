@@ -483,9 +483,9 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         image_patches_raw = self.patchify(x)
         B, C, H, W = image_patches_raw.shape
         image_patches = image_patches_raw.flatten(2).transpose(1, 2)
-        image_patches = self.norm_patch(image_patches)
+        # image_patches = self.norm_patch(image_patches)
 
-        # 4. Process through the two parallel attention streams
+        # 4. Process through the three parallel attention streams
         # --- Stream 1 ---
         attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
         attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
@@ -700,22 +700,30 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         self.cfg = cfg
         self.num_classes = cfg.dataset.num_classes
         
+        # self.backbone = timm.create_model(
+        #     'coatnet_0_rw_224', pretrained=True, features_only=True,
+        #     drop_path_rate=0.2
+        # )
         self.backbone = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
+            out_indices=(1, 2, 3, 4), # We need blocks 2, 3, and 4
             drop_path_rate=0.2
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
             
         feat_dims = self.backbone.feature_info.channels()
-        c2, c3, c4 = feat_dims[1], feat_dims[2], feat_dims[3]
+        c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
         # [FIX] Project processed features to 3 channels to match the expected input
-        self.gate1 = GatedAttentionModule(c2, c3, 64)
+        self.gate1 = GatedAttentionModule(c1, c2, 64)
         self.proj1 = nn.Conv2d(64, 3, kernel_size=1)
         
-        self.gate2 = GatedAttentionModule(c3, c4, 64)
+        self.gate2 = GatedAttentionModule(c2, c3, 64)
         self.proj2 = nn.Conv2d(64, 3, kernel_size=1)
+
+        self.gate3 = GatedAttentionModule(c3, c4, 64)
+        self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
         self.proj3_seq = nn.Sequential(
             nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
@@ -746,12 +754,12 @@ class CoAtNetSideViTClassifier_5(nn.Module):
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor:
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.backbone(x_backbone)
-        f2, f3, f4 = features[1], features[2], features[3]
+        f1, f2, f3, f4 = features[0], features[1], features[2], features[3]
 
         # Prepare 3-channel processed features
-        proc_feat1 = self.proj1(self.gate1(f2, f3))
-        proc_feat2 = self.proj2(self.gate2(f3, f4))
-        proc_feat3 = self.proj3_seq(f4)
+        proc_feat1 = self.proj1(self.gate1(f1, f2))
+        proc_feat2 = self.proj2(self.gate2(f2, f3))
+        proc_feat3 = self.proj2(self.gate2(f3, f4))
         
         # Downsample processed features and raw image to 64x64
         vit_input_size = (64, 64)
