@@ -312,11 +312,11 @@ class CoAtNetSideViTClassifier_2(nn.Module):
 
 class CoAtNetSideViTClassifier_3_old(nn.Module):
     def __init__(self,
-        side_vit1: nn.Module,
-        side_vit2: nn.Module,
-        cfg: Any,
-        pretrained: bool = True,
-        ):
+        side_vit1: nn.Module,
+        side_vit2: nn.Module,
+        cfg: Any,
+        pretrained: bool = True,
+    ):
         super().__init__()
         print("CoAtNetSideViTClassifier_3")
         IMG_CHANNELS  = cfg.dataset.image_channel_num
