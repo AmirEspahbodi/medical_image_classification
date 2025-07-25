@@ -744,7 +744,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         self.gate3 = GatedAttentionModule(c3, c4, 64)
         self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
-        self.proj_sv2 = nn.Conv2d(c2, in_ch, kernel_size=1, bias=False)
+        self.proj_sv1 = nn.Conv2d(c2, in_ch, kernel_size=1, bias=False)
         self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
         self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         
@@ -784,8 +784,8 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         # proc_feat2 = self.proj2(self.gate2(f2, f3))
         # proc_feat3 = self.proj3(self.gate3(f3, f4))
 
-        proc_feat1 = self.proj_sv3(f2)
-        proc_feat2 = self.proj_sv3(f3)
+        proc_feat1 = self.proj_sv1(f2)
+        proc_feat2 = self.proj_sv2(f3)
         proc_feat3 = self.proj_sv3(f4)
         
         
