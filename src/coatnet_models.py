@@ -621,7 +621,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             param.requires_grad = False
             
         feat_dims = self.backbone.feature_info.channels()
-        c1,, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
+        c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
         # --- Feature Preparation Paths ---
         self.gate1 = GatedAttentionModule(c1, c2, 64)
