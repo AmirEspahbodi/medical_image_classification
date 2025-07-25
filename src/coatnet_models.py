@@ -503,7 +503,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         reconstructed_img3 = self.reconstruct_from_patches(attended_patches3, H, W)
         vit_features3 = self.side_vit3(reconstructed_img3, key_states, value_states)
         # 5. Concatenate features and classify with the FC head
-        combined_features = torch.cat([vit_features1, vit_features3], dim=1)
+        combined_features = torch.cat([vit_features2, vit_features3], dim=1)
         final_logits = self.classification_head(combined_features)
 
         return final_logits
