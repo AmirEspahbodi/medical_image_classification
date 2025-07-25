@@ -330,11 +330,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         # --- Freeze the backbone parameters ---
         for param in self.model.parameters():
             param.requires_grad = False
-
-        # --- Fine-tuning Strategy (Unchanged) ---
-        for name, param in self.model.named_parameters():
-            if any([f'blocks.{i}' in name for i in (2, 3)]):
-                param.requires_grad = True
+        inject_lora_into_coatnet(self.model, rank=8)
         
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
         print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
