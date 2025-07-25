@@ -331,11 +331,10 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         for param in self.model.parameters():
             param.requires_grad = False
 
-        for param in self.model.s3.parameters():
-            param.requires_grad = True
-        
-        for param in self.model.s4.parameters():
-            param.requires_grad = True
+        # --- Fine-tuning Strategy (Unchanged) ---
+        for name, param in self.model.named_parameters():
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
+                param.requires_grad = True
         
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
         print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
