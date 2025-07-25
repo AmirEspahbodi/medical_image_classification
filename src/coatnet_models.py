@@ -729,7 +729,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
             if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
                 param.requires_grad = True
 
-        NUM_VIT_STREAMS = 3
+        NUM_VIT_STREAMS = 2
         in_ch = 3
         feat_dims = self.backbone.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
@@ -781,36 +781,36 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        # proc_feat2 = self.proj2(self.gate2(f2, f3))
-        # proc_feat3 = self.proj3(self.gate3(f3, f4))
+        proc_feat2 = self.proj2(self.gate2(f2, f3))
+        proc_feat3 = self.proj3(self.gate3(f3, f4))
 
-        proc_feat1 = self.proj_sv1(f2)
-        proc_feat2 = self.proj_sv2(f3)
-        proc_feat3 = self.proj_sv3(f4)
+        # proc_feat1 = self.proj_sv1(f2)
+        # proc_feat2 = self.proj_sv2(f3)
+        # proc_feat3 = self.proj_sv3(f4)
         
         
         # Downsample processed features and raw image to 64x64
         vit_input_size = (64, 64)
         
-        proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
+        # proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
         proc_feat2_res = F.interpolate(proc_feat2, size=vit_input_size, mode='bilinear', align_corners=False)
         proc_feat3_res = F.interpolate(proc_feat3, size=vit_input_size, mode='bilinear', align_corners=False)
         
         x_resized = F.interpolate(x, size=vit_input_size, mode='bilinear', align_corners=False)
 
         # [FIX] Fuse by addition instead of concatenation to maintain 3 channels
-        vit_input1 = proc_feat1_res + x_resized
+        # vit_input1 = proc_feat1_res + x_resized
         vit_input2 = proc_feat2_res + x_resized
         vit_input3 = proc_feat3_res + x_resized
 
-        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        # vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
         # fused_output = self.output_fusion(vit_out1, context_features)
         
-        features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out2, vit_out3], dim=1)
         logits = self.classifier_head(features)
         return logits
 
