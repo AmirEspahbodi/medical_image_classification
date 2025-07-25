@@ -333,7 +333,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
 
         # --- Fine-tuning Strategy (Unchanged) ---
         for name, param in self.model.named_parameters():
-            if any([f'blocks.{i}' in name for i in (2, 3)]):
+            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
                 param.requires_grad = True
         
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
@@ -423,7 +423,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
 
         # Define the combined feature dimensions for each stream
         # stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1]
-        stream2_dim = COATNET_DIMS[2]
+        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
         stream3_dim = COATNET_DIMS[3]
 
 
@@ -474,10 +474,10 @@ class CoAtNetSideViTClassifier_3(nn.Module):
 
         # 2. Process feature pairs for each stream
         # stream1_vec = self.process_feature_pair(f1, f2)
-        # stream2_vec = self.process_feature_pair(f2, f3)
+        stream2_vec = self.process_feature_pair(f2, f3)
         # stream3_vec = self.process_feature_pair(f3, f4)
         # stream1_vec = self.pool(f2).flatten(1)
-        stream2_vec = self.pool(f3).flatten(1)
+        # stream2_vec = self.pool(f3).flatten(1)
         stream3_vec = self.pool(f4).flatten(1)
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
@@ -724,7 +724,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = False
         for name, param in self.backbone.named_parameters():
-            if any([f'blocks.{i}' in name for i in (2, 3)]):
+            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
                 param.requires_grad = True
 
         NUM_VIT_STREAMS = 2
@@ -778,9 +778,9 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        # proc_feat2 = self.proj2(self.gate2(f2, f3))
+        proc_feat2 = self.proj2(self.gate2(f2, f3))
         # proc_feat3 = self.proj3(self.gate3(f3, f4))
-        proc_feat2 = self.proj_sv2(f3)
+        # proc_feat2 = self.proj_sv2(f3)
         proc_feat3 = self.proj_sv3(f4)
         
         
