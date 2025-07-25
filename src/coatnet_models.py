@@ -420,17 +420,16 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
-        stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1] # 192 + 384 = 576
-        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2] # 384 + 768 = 1152
-        stream3_dim = COATNET_DIMS[2] + COATNET_DIMS[3] # 384 + 768 = 1152
+        stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1]
+        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
+        stream3_dim = COATNET_DIMS[2] + COATNET_DIMS[3]
 
 
-
-        # --- Stream 1 Components (Blocks 2+3) ---
+        # --- Stream 1 Components (Blocks 1+2) ---
         self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit1 = side_vit1
 
-        # --- Stream 2 Components (Blocks 3+4) ---
+        # --- Stream 2 Components (Blocks 2+3) ---
         self.fusion_stream2 = CrossAttentionFusion3(stream2_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit2 = side_vit2
 
