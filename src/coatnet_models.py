@@ -439,11 +439,11 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.side_vit3 = side_vit3
         # --- Final Classification Head ---
         self.classifier_head = nn.Sequential(
-            nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
-            nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
+            nn.LayerNorm(NUM_CLASSES * NUM_VIT_STREAMS),
+            nn.Linear(NUM_CLASSES * NUM_VIT_STREAMS, NUM_CLASSES * NUM_VIT_STREAMS * 2),
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(self.num_classes * NUM_VIT_STREAMS * 2, self.num_classes)
+            nn.Linear(NUM_CLASSES * NUM_VIT_STREAMS * 2, NUM_CLASSES)
         )
         # --- Utility Layers ---
         self.patchify = nn.Conv2d(IMG_CHANNELS, self.patch_dim, kernel_size=VIT_PATCH_SIZE, stride=VIT_PATCH_SIZE)
