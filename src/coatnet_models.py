@@ -565,7 +565,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         # A simpler head with fewer parameters is less prone to overfitting.
         self.classification_head = nn.Sequential(
             nn.LayerNorm(NUM_CLASSES * NUM_VIT_STREAMS),
-            nn.Dropout(p=0.2)
+            nn.Dropout(p=0.2),
             nn.Linear(NUM_CLASSES * NUM_VIT_STREAMS, NUM_CLASSES)
         )
         print(f"--- Using Simplified Classification Head with Dropout={DROPOUT_RATE} ---")
