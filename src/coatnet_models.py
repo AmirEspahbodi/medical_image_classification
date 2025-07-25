@@ -422,8 +422,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
-        stream1_dim = COATNET_DIMS[0]
-        stream2_dim = COATNET_DIMS[1]
+        stream1_dim = COATNET_DIMS[1]
+        stream2_dim = COATNET_DIMS[2]
         stream3_dim = COATNET_DIMS[3]
 
 
