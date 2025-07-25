@@ -710,6 +710,9 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
+        for name, param in self.backbone.named_parameters():
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
+                param.requires_grad = True
             
         feat_dims = self.backbone.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
