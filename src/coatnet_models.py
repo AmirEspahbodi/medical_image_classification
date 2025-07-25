@@ -503,7 +503,7 @@ class CrossAttentionFusion3(nn.Module):
 
 # --- Complete Refactored Model with Anti-Overfitting Enhancements ---
 
-class CoAtNetSideViTClassifier_Regularized(nn.Module):
+class CoAtNetSideViTClassifier_3(nn.Module):
     """
     Revised version with stronger regularization to combat overfitting.
     Key Changes:
