@@ -623,7 +623,7 @@ class CoAtNetSideViTClassifier_4(nn.Module):
             param.requires_grad = False
 
         for name, param in self.backbone.named_parameters():
-            if any([f'blocks.{i}' in name for i in (2, 3)]):
+            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
                 param.requires_grad = True
         
         feat_dims = self.backbone.feature_info.channels()
@@ -675,9 +675,9 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         f1, f2, f3, f4 = features[0], features[1], features[2], features[3]
 
         # proc_feat1 = self.gate1(f1, f2)
-        # proc_feat2 = self.gate2(f2, f3)
+        proc_feat2 = self.gate2(f2, f3)
         # proc_feat3 = self.gate2(f3, f4)
-        proc_feat2 = self.proj_sv2(f3)
+        # proc_feat2 = self.proj_sv2(f3)
         proc_feat3 = self.proj_sv3(f4)
         
         # [FIX] Pass raw image 'x' directly. Resizing is now handled inside SpatialCrossAttention.
