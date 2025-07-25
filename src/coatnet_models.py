@@ -732,7 +732,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
         self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
-        self.proj_sv3 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
+        self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         
         self.proj3_seq = nn.Sequential(
             nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
