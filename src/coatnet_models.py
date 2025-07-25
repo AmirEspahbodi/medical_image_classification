@@ -438,14 +438,13 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.fusion_stream3 = CrossAttentionFusion3(stream3_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit3 = side_vit3
         # --- Final Classification Head ---
-        self.classification_head = nn.Sequential(
-            nn.LayerNorm(SIDE_VIT_OUT_DIM * NUM_VIT_STREAMS),
-            nn.Linear(SIDE_VIT_OUT_DIM * NUM_VIT_STREAMS, 16),
-            nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
-            nn.Linear(16, NUM_CLASSES)
+        self.classifier_head = nn.Sequential(
+            nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
+            nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(self.num_classes * NUM_VIT_STREAMS * 2, self.num_classes)
         )
-
         # --- Utility Layers ---
         self.patchify = nn.Conv2d(IMG_CHANNELS, self.patch_dim, kernel_size=VIT_PATCH_SIZE, stride=VIT_PATCH_SIZE)
         self.unpatchify = nn.ConvTranspose2d(self.patch_dim, IMG_CHANNELS, kernel_size=VIT_PATCH_SIZE, stride=VIT_PATCH_SIZE)
@@ -751,7 +750,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
             nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
             nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(self.num_classes * NUM_VIT_STREAMS * 2, self.num_classes)
         )
     
