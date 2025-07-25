@@ -331,6 +331,12 @@ class MultiScaleCoAtNetBackbone(nn.Module):
         for param in self.model.parameters():
             param.requires_grad = False
 
+        for param in self.model.s3.parameters():
+            param.requires_grad = True
+        
+        for param in self.model.s4.parameters():
+            param.requires_grad = True
+        
         print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
         print("--- Backbone is FROZEN. No gradients will be computed for it. ---")
         feature_info = self.model.feature_info.channels()
@@ -755,4 +761,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
         logits = self.classifier_head(features)
         return logits
+
+################################################################################################################################################################
+
 
