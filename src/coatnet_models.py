@@ -473,12 +473,12 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         f1, f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
 
         # 2. Process feature pairs for each stream
-        stream1_vec = self.process_feature_pair(f1, f2)
-        stream2_vec = self.process_feature_pair(f2, f3)
-        stream3_vec = self.process_feature_pair(f3, f4)
-        # stream1_vec = f2
-        # stream2_vec = f3
-        # stream3_vec = f4
+        # stream1_vec = self.process_feature_pair(f1, f2)
+        # stream2_vec = self.process_feature_pair(f2, f3)
+        # stream3_vec = self.process_feature_pair(f3, f4)
+        stream1_vec = self.pool(f2).flatten(1)
+        stream2_vec = self.pool(f3).flatten(1)
+        stream3_vec = self.pool(f4).flatten(1)
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
         B, C, H, W = image_patches_raw.shape
