@@ -636,10 +636,10 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         self.gate2 = GatedAttentionModule(c2, c3, 64)
         self.gate3 = GatedAttentionModule(c3, c4, 64)
 
-        in_ch = 3
-        self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
-        self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
-        
+        proj_channels = 64
+        self.proj_sv2 = nn.Conv2d(c3, proj_channels, kernel_size=1, bias=False)
+        self.proj_sv3 = nn.Conv2d(c4, proj_channels, kernel_size=1, bias=False)
+                
         # --- Spatial Cross-Attention Fusion for ViT Inputs ---
         self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
         self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
