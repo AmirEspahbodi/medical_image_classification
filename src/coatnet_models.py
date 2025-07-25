@@ -621,21 +621,30 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         )
         for param in self.backbone.parameters():
             param.requires_grad = False
-            
+
+        for name, param in self.backbone.named_parameters():
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
+                param.requires_grad = True
+        
         feat_dims = self.backbone.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
+        NUM_VIT_STREAMS = 2
+        
         # --- Feature Preparation Paths ---
         self.gate1 = GatedAttentionModule(c1, c2, 64)
         self.gate2 = GatedAttentionModule(c2, c3, 64)
         self.gate3 = GatedAttentionModule(c3, c4, 64)
 
+        in_ch = 3
+        self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
+        self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         
         # --- Spatial Cross-Attention Fusion for ViT Inputs ---
         self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
         self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
         self.spatial_fusion3 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
-        
+    
         # --- Side-ViT Modules ---
         self.side_vit1 = side_vit1
         self.side_vit2 = side_vit2
@@ -653,11 +662,11 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         # )
         # --- Final Classifier Head ---
         self.classifier_head = nn.Sequential(
-            nn.LayerNorm(self.num_classes * 3),
-            nn.Linear(self.num_classes * 3, self.num_classes * 3 * 2),
+            nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
+            nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
             nn.GELU(),
             nn.Dropout(0.2),
-            nn.Linear(self.num_classes * 3 * 2, self.num_classes)
+            nn.Linear(self.num_classes * NUM_VIT_STREAMS * 2, self.num_classes)
         )
 
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor: # Accept extra args to match user's call
@@ -665,26 +674,28 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         features = self.backbone(x_backbone)
         f1, f2, f3, f4 = features[0], features[1], features[2], features[3]
 
-        proc_feat1 = self.gate1(f1, f2)
-        proc_feat2 = self.gate2(f2, f3)
-        proc_feat3 = self.gate2(f3, f4)
+        # proc_feat1 = self.gate1(f1, f2)
+        # proc_feat2 = self.gate2(f2, f3)
+        # proc_feat3 = self.gate2(f3, f4)
+        proc_feat2 = proj_sv2(f3)
+        proc_feat3 = proj_sv3(f4)
         
         # [FIX] Pass raw image 'x' directly. Resizing is now handled inside SpatialCrossAttention.
-        vit_input1 = self.spatial_fusion1(proc_feat1, x)
+        # vit_input1 = self.spatial_fusion1(proc_feat1, x)
         vit_input2 = self.spatial_fusion2(proc_feat2, x)
         vit_input3 = self.spatial_fusion3(proc_feat3, x)
         
-        vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
+        # vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input2 = F.interpolate(vit_input2, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
 
-        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        # vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
         # fused_output = self.output_fusion(vit_out1, context_features)
-        features = torch.cat([vit_out1, vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out2, vit_out3], dim=1)
         logits = self.classifier_head(features)
         return logits
 
