@@ -677,8 +677,8 @@ class CoAtNetSideViTClassifier_4(nn.Module):
         # proc_feat1 = self.gate1(f1, f2)
         # proc_feat2 = self.gate2(f2, f3)
         # proc_feat3 = self.gate2(f3, f4)
-        proc_feat2 = proj_sv2(f3)
-        proc_feat3 = proj_sv3(f4)
+        proc_feat2 = self.proj_sv2(f3)
+        proc_feat3 = self.proj_sv3(f4)
         
         # [FIX] Pass raw image 'x' directly. Resizing is now handled inside SpatialCrossAttention.
         # vit_input1 = self.spatial_fusion1(proc_feat1, x)
