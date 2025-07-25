@@ -438,7 +438,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.fusion_stream3 = CrossAttentionFusion3(stream3_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit3 = side_vit3
         # --- Final Classification Head ---
-        self.classifier_head = nn.Sequential(
+        self.classification_head = nn.Sequential(
             nn.LayerNorm(NUM_CLASSES * NUM_VIT_STREAMS),
             nn.Linear(NUM_CLASSES * NUM_VIT_STREAMS, NUM_CLASSES * NUM_VIT_STREAMS * 2),
             nn.GELU(),
