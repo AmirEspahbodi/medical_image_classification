@@ -400,6 +400,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         pretrained: bool = True,
         ):
         super().__init__()
+        print("CoAtNetSideViTClassifier_3")
         IMG_CHANNELS  = cfg.dataset.image_channel_num
         NUM_CLASSES = cfg.dataset.num_classes
         IMG_SIZE = 128
@@ -609,6 +610,7 @@ class CrossAttentionFusion(nn.Module):
 class CoAtNetSideViTClassifier_4(nn.Module):
     def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
         super().__init__()
+        print("CoAtNetSideViTClassifier_4")
         self.cfg = cfg
         self.num_classes = cfg.dataset.num_classes
         
@@ -695,6 +697,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
     """
     def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
         super().__init__()
+        print("CoAtNetSideViTClassifier_5")
         self.cfg = cfg
         self.num_classes = cfg.dataset.num_classes
         
