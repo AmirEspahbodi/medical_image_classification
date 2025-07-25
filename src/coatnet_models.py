@@ -413,7 +413,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         # Feature dimensions from CoAtNet-0 blocks (stages 1, 2, 3, 4)
         COATNET_DIMS = [96, 192, 384, 768]
         SIDE_VIT_OUT_DIM = 2
-        NUM_VIT_STREAMS = 2
+        NUM_VIT_STREAMS = 3
                      
         self.patch_size = VIT_PATCH_SIZE
         self.num_patches = (IMG_SIZE // VIT_PATCH_SIZE) ** NUM_VIT_STREAMS
@@ -422,14 +422,14 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
-        # stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1]
-        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
+        stream1_dim = COATNET_DIMS[0]
+        stream2_dim = COATNET_DIMS[1]
         stream3_dim = COATNET_DIMS[3]
 
 
         # --- Stream 1 Components (Blocks 1+2) ---
-        # self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
-        # self.side_vit1 = side_vit1
+        self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
+        self.side_vit1 = side_vit1
 
         # --- Stream 2 Components (Blocks 2+3) ---
         self.fusion_stream2 = CrossAttentionFusion3(stream2_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
@@ -438,6 +438,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         # --- Stream 2 Components (Blocks 3+4) ---
         self.fusion_stream3 = CrossAttentionFusion3(stream3_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit3 = side_vit3
+    
         # --- Final Classification Head ---
         self.classification_head = nn.Sequential(
             nn.LayerNorm(NUM_CLASSES * NUM_VIT_STREAMS),
@@ -474,10 +475,10 @@ class CoAtNetSideViTClassifier_3(nn.Module):
 
         # 2. Process feature pairs for each stream
         # stream1_vec = self.process_feature_pair(f1, f2)
-        stream2_vec = self.process_feature_pair(f2, f3)
+        # stream2_vec = self.process_feature_pair(f2, f3)
         # stream3_vec = self.process_feature_pair(f3, f4)
-        # stream1_vec = self.pool(f2).flatten(1)
-        # stream2_vec = self.pool(f3).flatten(1)
+        stream1_vec = self.pool(f2).flatten(1)
+        stream2_vec = self.pool(f3).flatten(1)
         stream3_vec = self.pool(f4).flatten(1)
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
@@ -487,10 +488,10 @@ class CoAtNetSideViTClassifier_3(nn.Module):
 
         # 4. Process through the three parallel attention streams
         # --- Stream 1 ---
-        # attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
-        # attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
-        # reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
-        # vit_features1 = self.side_vit1(reconstructed_img1, key_states, value_states)
+        attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
+        attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
+        reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
+        vit_features1 = self.side_vit1(reconstructed_img1, key_states, value_states)
 
         # --- Stream 2 ---
         attended_patches2 = self.fusion_stream2(image_patches, stream2_vec)
@@ -503,7 +504,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         reconstructed_img3 = self.reconstruct_from_patches(attended_patches3, H, W)
         vit_features3 = self.side_vit3(reconstructed_img3, key_states, value_states)
         # 5. Concatenate features and classify with the FC head
-        combined_features = torch.cat([vit_features2, vit_features3], dim=1)
+# 
+        combined_features = torch.cat([vit_features1و vit_features2, vit_features3], dim=1)
         final_logits = self.classification_head(combined_features)
 
         return final_logits
@@ -742,6 +744,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         self.gate3 = GatedAttentionModule(c3, c4, 64)
         self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
+        self.proj_sv2 = nn.Conv2d(c2, in_ch, kernel_size=1, bias=False)
         self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
         self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         
@@ -778,26 +781,30 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        proc_feat2 = self.proj2(self.gate2(f2, f3))
+        # proc_feat2 = self.proj2(self.gate2(f2, f3))
         # proc_feat3 = self.proj3(self.gate3(f3, f4))
-        # proc_feat2 = self.proj_sv2(f3)
+
+        proc_feat1 = self.proj_sv3(f2)
+        proc_feat2 = self.proj_sv3(f3)
         proc_feat3 = self.proj_sv3(f4)
         
         
         # Downsample processed features and raw image to 64x64
         vit_input_size = (64, 64)
-        # proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
+        
+        proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
         proc_feat2_res = F.interpolate(proc_feat2, size=vit_input_size, mode='bilinear', align_corners=False)
         proc_feat3_res = F.interpolate(proc_feat3, size=vit_input_size, mode='bilinear', align_corners=False)
+        
         x_resized = F.interpolate(x, size=vit_input_size, mode='bilinear', align_corners=False)
 
         # [FIX] Fuse by addition instead of concatenation to maintain 3 channels
-        # vit_input1 = proc_feat1_res + x_resized
+        vit_input1 = proc_feat1_res + x_resized
         vit_input2 = proc_feat2_res + x_resized
         vit_input3 = proc_feat3_res + x_resized
 
-        # vit_out1 = self.side_vit1(vit_input1,key_states, value_states)
-        vit_out2 = self.side_vit2(vit_input2,key_states, value_states)
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
         vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
         # context_features = torch.stack([vit_out2, vit_out3], dim=1)
