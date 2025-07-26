@@ -193,15 +193,15 @@ if __name__ == '__main__':
 
     hydra_overrides = []
     if args.btl is not None:
-        btl_str = '[' + ','.join(map(str, )) + ']'
+        btl_str = '[' + ','.join(map(str, args.btl)) + ']'
         hydra_overrides.append(f'network.backbone_trainable_layers={btl_str}')
 
     if args.v1fs is not None:
-        v1fs_str = '[' + ','.join(map(str, )) + ']'
+        v1fs_str = '[' + ','.join(map(str, args.v1fs)) + ']'
         hydra_overrides.append(f'network.vit1_feature_strame={v1fs_str}')
 
     if args.v2fs is not None:
-        v2fs_str = '[' + ','.join(map(str, )) + ']'
+        v2fs_str = '[' + ','.join(map(str, args.v2fs)) + ']'
         hydra_overrides.append(f'network.vit2_feature_strame={v2fs_str}')
 
     sys.argv = [sys.argv[0]] + hydra_overrides + unknown_args
