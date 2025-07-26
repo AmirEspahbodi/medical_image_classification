@@ -7,7 +7,8 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from src.utils.func import *
-from train import train, evaluate
+from train import train
+from old_train import evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
