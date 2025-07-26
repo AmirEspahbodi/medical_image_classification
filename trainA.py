@@ -12,7 +12,7 @@ from src.utils.func import *
 from src.loss import *
 from src.scheduler import *
 
-def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator)
+def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     device = cfg.base.device
     
     # Differential Learning Rates Setup
