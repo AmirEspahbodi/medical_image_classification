@@ -183,11 +183,11 @@ def set_seed(seed, deterministic=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run training with custom arguments for Hydra.")
-    parser.add_argument('--btl', '--backbone_trainable_layers', type=int, nargs='+',
+    parser.add_argument('-btl', '--backbone_trainable_layers', type=int, nargs='+',
                         help='List of backbone layers to train (e.g., 1 2 3 4).')
-    parser.add_argument('--v1fs', '--vit1_feature_strame', type=int, nargs=2,
+    parser.add_argument('-v1fs', '--vit1_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT1 feature stride, each between 1 and 4 (e.g., 1 4).')
-    parser.add_argument('--v2fs', '--vit2_feature_strame', type=int, nargs=2,
+    parser.add_argument('-v2fs', '--vit2_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT2 feature stride, each between 1 and 4 (e.g., 2 3).')
     args, unknown_args = parser.parse_known_args()
 
