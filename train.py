@@ -108,7 +108,7 @@ class ModernTrainer:
         self.loss_fn = nn.CrossEntropyLoss(label_smoothing=self.cfg.train.label_smoothing)
 
         # --- 4. DataLoaders & Gradient Accumulation ---
-        self.train_loader, self.val_loader = initialize_dataloader(train_dataset, val_dataset)
+        self.train_loader, self.val_loader = initialize_dataloader(cfg, train_dataset, val_dataset)
         self.accumulation_steps = self.cfg.train.get('accumulation_steps', 1)
 
         # --- 5. Scheduler: OneCycleLR ---
