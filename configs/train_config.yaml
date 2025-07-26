@@ -12,3 +12,11 @@ train:
   eval_interval: 1 # the epoch interval of evaluating model on val dataset
   sample_view: false # save and visualize a batch of images on Tensorboard
   pin_memory: true # enables fast data transfer to CUDA-enabled GPUs
+  backbone_lr: 1.0e-5
+  learning_rate: 1.0e-4
+  sam_rho: 0.05
+  sam_adaptive: true
+  weight_decay: 0.01
+  label_smoothing: 0.1
+  amp: true
+  early_stopping_patience: 4
