@@ -199,6 +199,7 @@ def initialize_loss(cfg, train_dataset):
     criterion = cfg.train.criterion
     weight = None
     loss_weight_scheduler = None # Assuming this is your custom scheduler
+    loss_weight = cfg.train.loss_weight
     
     if criterion == 'cross_entropy':
         print(f"--- Using CrossEntropyLoss with label smoothing: {cfg.train.label_smoothing} ---")
