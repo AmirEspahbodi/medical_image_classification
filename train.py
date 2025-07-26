@@ -237,3 +237,26 @@ def resume(cfg, model, optimizer):
     else:
         print_msg('No checkpoint found at {}'.format(checkpoint))
         raise FileNotFoundError('No checkpoint found at {}'.format(checkpoint))
+
+def initialize_dataloader(cfg, train_dataset, val_dataset):
+    batch_size = cfg.train.batch_size
+    num_workers = cfg.train.num_workers
+    pin_memory = cfg.train.pin_memory
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        drop_last=True,
+        pin_memory=pin_memory
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=False,
+        pin_memory=pin_memory
+    )
+
+    return train_loader, val_loader
