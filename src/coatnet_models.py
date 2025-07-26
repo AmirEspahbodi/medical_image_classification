@@ -309,8 +309,85 @@ class CoAtNetSideViTClassifier_2(nn.Module):
         logits = self.mlp(combined)
         return logits
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-class CoAtNetSideViTClassifier_3_old(nn.Module):
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import timm
+from timm.models.layers import DropPath
+from typing import Any
+
+# Unchanged dependency class
+class MultiScaleCoAtNetBackbone(nn.Module):
+    """
+    CNN Backbone using a pre-trained CoAtNet.
+    The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
+    """
+    def __init__(self, model_name, in_chans, pretrained=True):
+        super().__init__()
+        self.model = timm.create_model(
+            model_name,
+            pretrained=pretrained,
+            in_chans=in_chans,
+            features_only=True,
+            out_indices=(1, 2, 3, 4) # We need blocks 2, 3, and 4
+        )
+
+        # --- Freeze the backbone parameters ---
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # --- Fine-tuning Strategy (Unchanged) ---
+        for name, param in self.model.named_parameters():
+            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
+                param.requires_grad = True
+        
+        print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
+        print("--- Backbone is partially FROZEN. Fine-tuning later blocks. ---")
+        feature_info = self.model.feature_info.channels()
+        print(f"    Feature map channels extracted: {feature_info}")
+
+    def forward(self, x):
+        """
+        Processes the input image and returns the last three feature maps.
+        """
+        # The model is in eval mode for the frozen parts, but we need grads for the unfrozen ones.
+        # So we don't use torch.no_grad() here.
+        feature_maps = self.model(x)
+        return feature_maps
+
+# Unchanged dependency class
+class CrossAttentionFusion3(nn.Module):
+    """
+    Advanced feature fusion module.
+    """
+    def __init__(self, cnn_embed_dim, vit_patch_dim, num_heads, dropout):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = vit_patch_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.to_q = nn.Linear(vit_patch_dim, vit_patch_dim, bias=False)
+        self.to_kv = nn.Linear(cnn_embed_dim, vit_patch_dim * 2, bias=False)
+        self.proj = nn.Linear(vit_patch_dim, vit_patch_dim)
+        self.proj_drop = nn.Dropout(dropout)
+
+    def forward(self, image_patches, cnn_feature_vector):
+        B, N, C = image_patches.shape
+        q = self.to_q(image_patches).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        cnn_features_seq = cnn_feature_vector.unsqueeze(1)
+        kv = self.to_kv(cnn_features_seq).reshape(B, 1, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+# --- Complete Refactored Model with Anti-Overfitting Enhancements ---
+class CoAtNetSideViTClassifier_3(nn.Module):
     def __init__(self,
         side_vit1: nn.Module,
         side_vit2: nn.Module,
@@ -424,87 +501,7 @@ class CoAtNetSideViTClassifier_3_old(nn.Module):
         reconstructed_img = self.unpatchify(patches_reshaped)
         return reconstructed_img
 
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import timm
-from timm.models.layers import DropPath
-from typing import Any
-
-# Unchanged dependency class
-class MultiScaleCoAtNetBackbone(nn.Module):
-    """
-    CNN Backbone using a pre-trained CoAtNet.
-    The backbone parameters are FROZEN. It now extracts features from blocks 2, 3, and 4.
-    """
-    def __init__(self, model_name, in_chans, pretrained=True):
-        super().__init__()
-        self.model = timm.create_model(
-            model_name,
-            pretrained=pretrained,
-            in_chans=in_chans,
-            features_only=True,
-            out_indices=(1, 2, 3, 4) # We need blocks 2, 3, and 4
-        )
-
-        # --- Freeze the backbone parameters ---
-        for param in self.model.parameters():
-            param.requires_grad = False
-
-        # --- Fine-tuning Strategy (Unchanged) ---
-        for name, param in self.model.named_parameters():
-            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
-                param.requires_grad = True
-        
-        print(f"--- Initialized CNN Backbone: {model_name} (pretrained={pretrained}) ---")
-        print("--- Backbone is partially FROZEN. Fine-tuning later blocks. ---")
-        feature_info = self.model.feature_info.channels()
-        print(f"    Feature map channels extracted: {feature_info}")
-
-    def forward(self, x):
-        """
-        Processes the input image and returns the last three feature maps.
-        """
-        # The model is in eval mode for the frozen parts, but we need grads for the unfrozen ones.
-        # So we don't use torch.no_grad() here.
-        feature_maps = self.model(x)
-        return feature_maps
-
-# Unchanged dependency class
-class CrossAttentionFusion3(nn.Module):
-    """
-    Advanced feature fusion module.
-    """
-    def __init__(self, cnn_embed_dim, vit_patch_dim, num_heads, dropout):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = vit_patch_dim // num_heads
-        self.scale = self.head_dim ** -0.5
-        self.to_q = nn.Linear(vit_patch_dim, vit_patch_dim, bias=False)
-        self.to_kv = nn.Linear(cnn_embed_dim, vit_patch_dim * 2, bias=False)
-        self.proj = nn.Linear(vit_patch_dim, vit_patch_dim)
-        self.proj_drop = nn.Dropout(dropout)
-
-    def forward(self, image_patches, cnn_feature_vector):
-        B, N, C = image_patches.shape
-        q = self.to_q(image_patches).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        cnn_features_seq = cnn_feature_vector.unsqueeze(1)
-        kv = self.to_kv(cnn_features_seq).reshape(B, 1, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
-        k, v = kv[0], kv[1]
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
-
-# --- Complete Refactored Model with Anti-Overfitting Enhancements ---
-
-class CoAtNetSideViTClassifier_3(nn.Module):
+class CoAtNetSideViTClassifier_3_reg(nn.Module):
     """
     Revised version with stronger regularization to combat overfitting.
     Key Changes:
