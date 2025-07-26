@@ -15,7 +15,7 @@ def generate_model(cfg, use_cnn=False):
     model = model.to(cfg.base.device)
 
     # the computation of the number of learnable parameters only works when the preloading is disabled
-    if cfg.dataset.preload_path:
+    if not cfg.dataset.preload_path:
         print("here 0 0 0 0 0 0 0 0")
         frozen_encoder = None
     else:
