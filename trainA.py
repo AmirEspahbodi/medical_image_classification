@@ -5,78 +5,64 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-# ✨ Added SWA and standard schedulers
 from torch.optim.swa_utils import AveragedModel, SWALR
 from torch.optim.lr_scheduler import OneCycleLR
 
 from src.utils.func import *
 from src.loss import *
-# Removed custom scheduler import as we now use torch.optim.lr_scheduler
 from src.scheduler import *
 
-def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
-    """
-    Refactored training loop implementing Plan B:
-    1. Main Training Phase: Uses AdamW, OneCycleLR, and Early Stopping.
-    2. SWA Phase: Averages model weights for the final epochs to improve generalization.
-    """
+def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator)
     device = cfg.base.device
     
-    # ✨ Setup for Differential Learning Rates
-    # Assumes your model has a 'cnn_backbone' attribute. Adjust if named differently.
+    # Differential Learning Rates Setup
     backbone_params = [p for n, p in model.named_parameters() if 'cnn_backbone' in n and p.requires_grad]
     head_params = [p for n, p in model.named_parameters() if 'cnn_backbone' not in n and p.requires_grad]
-    
     param_groups = [
-        {'params': backbone_params, 'lr': cfg.solver.backbone_lr}, # e.g., 1e-5
-        {'params': head_params, 'lr': cfg.solver.head_lr}         # e.g., 1e-4
+        {'params': backbone_params, 'lr': cfg.solver.backbone_lr},
+        {'params': head_params, 'lr': cfg.solver.head_lr}
     ]
 
     optimizer = initialize_optimizer(cfg, param_groups)
-    # ✨ Loss function now supports label smoothing from config
     loss_function, loss_weight_scheduler = initialize_loss(cfg, train_dataset)
     train_loader, val_loader = initialize_dataloader(cfg, train_dataset, val_dataset)
 
-    # ✨ Schedulers: OneCycleLR for main training, SWALR for SWA phase
+    # Schedulers: OneCycleLR for main training
     main_scheduler = OneCycleLR(
         optimizer,
         max_lr=[g['lr'] for g in param_groups],
         total_steps=len(train_loader) * cfg.train.epochs,
-        pct_start=0.1, # Warmup for 10% of steps
+        pct_start=0.1,
         anneal_strategy='cos'
     )
 
-    # ✨ SWA Setup
-    swa_start_epoch = cfg.train.swa_start_epoch # e.g., start SWA at 75% of total epochs
+    # SWA Setup
+    swa_start_epoch = cfg.train.swa_start_epoch
     swa_model = AveragedModel(model)
-    swa_scheduler = SWALR(optimizer, swa_lr=cfg.solver.swa_lr) # e.g., 1e-3
+    swa_scheduler = SWALR(optimizer, swa_lr=cfg.solver.swa_lr)
 
-    # ✨ Early Stopping Setup
+    # Early Stopping & History Tracking
     max_indicator = 0
     epochs_no_improve = 0
-    patience = cfg.train.early_stopping_patience # e.g., 10 epochs
+    patience = cfg.train.early_stopping_patience
+    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
-    # --- Training Initialization ---
     start_epoch = 0
     if cfg.base.checkpoint:
-        # Note: Resuming SWA requires more complex state saving. 
-        # This implementation resumes standard training.
         start_epoch = resume(cfg, model, optimizer)
 
+    print("--- Starting Training with Plan B (SWA + Plotting) ---")
     model.train()
     for epoch in range(start_epoch, cfg.train.epochs):
-        # --- Update Dynamic Loss Weights (if any) ---
         if loss_weight_scheduler:
             weight = loss_weight_scheduler.step()
             loss_function.weight = weight.to(device)
 
         epoch_loss = 0
         estimator.reset()
-        
         progress = tqdm(train_loader, desc=f'Epoch {epoch + 1}/{cfg.train.epochs}', leave=False) if cfg.base.progress else train_loader
         
         for step, train_data in enumerate(progress):
-            # --- Data Preparation ---
             if cfg.dataset.preload_path:
                 X_side, key_states, value_states, y = train_data
                 key_states, value_states = key_states.to(device), value_states.to(device)
@@ -90,7 +76,6 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             X_side, y = X_side.to(device), y.to(device)
             y = select_target_type(y, cfg.train.criterion)
 
-            # --- Forward & Backward Pass ---
             y_pred = model(X_side, key_states, value_states)
             loss = loss_function(y_pred, y)
             
@@ -99,37 +84,39 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            # ✨ Scheduler step (OneCycleLR steps per batch)
             if epoch < swa_start_epoch:
                 main_scheduler.step()
 
-            # --- Logging ---
             epoch_loss += loss.item()
             estimator.update(y_pred, y)
             if cfg.base.progress:
                 progress.set_postfix(Loss=f'{epoch_loss/(step+1):.4f}', LR=f"{optimizer.param_groups[0]['lr']:.2e}")
 
-        # --- SWA Scheduler Step (steps per epoch) ---
+        # SWA Scheduler Step
         if epoch >= swa_start_epoch:
             swa_model.update_parameters(model)
             swa_scheduler.step()
 
-        # --- Validation & Early Stopping ---
-        # Evaluate using the standard model during main phase, and SWA model during SWA phase
+        # Record training metrics
+        avg_train_loss = epoch_loss / len(train_loader)
+        train_scores = estimator.get_scores(4)
+        history['train_loss'].append(avg_train_loss)
+        history['train_acc'].append(train_scores.get(cfg.train.indicator, 0))
+
+        # Validation
         eval_model = swa_model if epoch >= swa_start_epoch else model
-        eval(cfg, frozen_encoder, eval_model, val_loader, estimator, device)
-        val_scores = estimator.get_scores(6)
+        val_loss, val_scores = eval(cfg, frozen_encoder, eval_model, val_loader, estimator, device, loss_function)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_scores.get(cfg.train.indicator, 0))
+
+        print(f"\nEpoch {epoch+1} Train Loss: {avg_train_loss:.4f}, Train Acc: {train_scores.get(cfg.train.indicator, 0):.4f}")
+        print(f"Epoch {epoch+1} Val Loss:   {val_loss:.4f}, Val Acc:   {val_scores.get(cfg.train.indicator, 0):.4f}")
         
-        print(f"\nEpoch {epoch+1} Validation Metrics: {val_scores}")
-        
-        # --- Model Checkpointing & Saving Best Model ---
         indicator = val_scores[cfg.train.indicator]
         if indicator > max_indicator:
             max_indicator = indicator
             epochs_no_improve = 0
-            # Always save the best single model found before or during SWA
             save_weights(cfg, model, 'best_validation_weights.pt')
-            print(f"🚀 New best model saved with {cfg.train.indicator}: {max_indicator:.4f}")
         else:
             epochs_no_improve += 1
 
@@ -137,20 +124,12 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             print(f"--- Early stopping triggered after {patience} epochs with no improvement. ---")
             break
 
-    # --- Finalize and Save SWA Model ---
-    print("\n--- Training finished. Finalizing SWA model. ---")
-    # Update SWA batch norm stats
-    # The default `update_bn` utility can't handle our model's custom forward signature.
-    # We must manually run a forward pass on training data to update the BN layers.
-    swa_model.train()  # Set to train mode to update BN stats
+    # Finalize SWA Model
+    print("\n--- Training finished. Updating SWA model batch norm statistics. ---")
+    swa_model.train()
     with torch.no_grad():
-        # Iterate over a subset of the loader (e.g., 100 batches) to update the BN stats.
-        # This is usually sufficient and faster than using the whole dataset.
         for i, train_data in enumerate(train_loader):
-            # if i >= 100:
-            #     break
-            
-            # IMPORTANT: This data preparation logic must EXACTLY match your training loop
+            if i >= 100: break
             if cfg.dataset.preload_path:
                 X_side, key_states, value_states, y = train_data
                 key_states, value_states = key_states.to(device), value_states.to(device)
@@ -158,52 +137,77 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             else:
                 X_lpm, X_side, y = train_data
                 X_lpm = X_lpm.to(device)
-                # The frozen_encoder is needed here to generate the states
                 _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
-
             X_side = X_side.to(device)
-            
-            # Perform the forward pass with all three required arguments
             swa_model(X_side, key_states, value_states)
-
-    print("--- SWA model BN stats updated. Saving final model. ---")
-
-    # Save the final SWA model
-    save_weights(cfg, swa_model, 'final_weights.pt')
-
-    # Return the SWA model for final evaluation
+    
+    save_weights(cfg, swa_model, 'swa_model_final_weights.pt')
+    
+    # Save plots
+    save_plots(cfg, history, cfg.dataset.save_path)
+    
     return swa_model
 
 
-###
-### Helper Function Modifications
-###
+def save_plots(cfg, history, save_path):
+    """Saves plots for training/validation loss and accuracy."""
+    print("--- Generating and saving performance plots... ---")
+    epochs = range(1, len(history['train_loss']) + 1)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, history['train_loss'], 'b-o', label='Training Loss')
+    plt.plot(epochs, history['val_loss'], 'r-o', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_loss_plot.png'))
+    plt.close()
 
-def eval(cfg, frozen_encoder, model, dataloader, estimator, device):
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, history['train_acc'], 'b-o', label='Training Accuracy')
+    plt.plot(epochs, history['val_acc'], 'r-o', label='Validation Accuracy')
+    plt.title('Training and Validation Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_accuracy_plot.png'))
+    plt.close()
+    print(f"Performance plots saved to {save_path}")
+
+
+def eval(cfg, frozen_encoder, model, dataloader, estimator, device, loss_function):
     model.eval()
     torch.set_grad_enabled(False)
-
     estimator.reset()
+    total_loss = 0.0
+    
     for test_data in dataloader:
         if cfg.dataset.preload_path:
             X_side, key_states, value_states, y = test_data
             key_states, value_states = key_states.to(device), value_states.to(device)
-            key_states = key_states.transpose(0, 1)
-            value_states = value_states.transpose(0, 1)
+            key_states, value_states = key_states.transpose(0, 1), value_states.transpose(0, 1)
         else:
             X_lpm, X_side, y = test_data
             X_lpm = X_lpm.to(device)
             with torch.no_grad():
                 _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
-
+        
         X_side, y = X_side.to(device), y.to(device)
-        y = select_target_type(y, cfg.train.criterion)
-
+        y_true = select_target_type(y, cfg.train.criterion)
         y_pred = model(X_side, key_states, value_states)
-        estimator.update(y_pred, y)
-
+        
+        loss = loss_function(y_pred, y_true)
+        total_loss += loss.item()
+        estimator.update(y_pred, y_true)
+        
     model.train()
     torch.set_grad_enabled(True)
+    avg_loss = total_loss / len(dataloader)
+    scores = estimator.get_scores(6)
+    return avg_loss, scores
 
 def initialize_optimizer(cfg, params): # Now accepts params directly
     solver = cfg.solver.optimizer
