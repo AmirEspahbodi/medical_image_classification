@@ -147,9 +147,36 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     # Return the SWA model for final evaluation
     return swa_model
 
+
 ###
 ### Helper Function Modifications
 ###
+
+def eval(cfg, frozen_encoder, model, dataloader, estimator, device):
+    model.eval()
+    torch.set_grad_enabled(False)
+
+    estimator.reset()
+    for test_data in dataloader:
+        if cfg.dataset.preload_path:
+            X_side, key_states, value_states, y = test_data
+            key_states, value_states = key_states.to(device), value_states.to(device)
+            key_states = key_states.transpose(0, 1)
+            value_states = value_states.transpose(0, 1)
+        else:
+            X_lpm, X_side, y = test_data
+            X_lpm = X_lpm.to(device)
+            with torch.no_grad():
+                _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
+
+        X_side, y = X_side.to(device), y.to(device)
+        y = select_target_type(y, cfg.train.criterion)
+
+        y_pred = model(X_side, key_states, value_states)
+        estimator.update(y_pred, y)
+
+    model.train()
+    torch.set_grad_enabled(True)
 
 def initialize_optimizer(cfg, params): # Now accepts params directly
     solver = cfg.solver.optimizer
