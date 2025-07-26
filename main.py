@@ -71,7 +71,9 @@ def main(cfg):
     print(type(cfg.network.backbone_trainable_layers))
     print(type(cfg.network.vit1_feature_strame))
     print(type(cfg.network.vit2_feature_strame))
-
+    print([i for i in cfg.network.backbone_trainable_layers])
+    print([i for i in cfg.network.vit1_feature_strame])
+    print([i for i in cfg.network.vit2_feature_strame])
 
     # create folder
     save_path = cfg.dataset.save_path
