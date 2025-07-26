@@ -68,15 +68,17 @@ class SAM(torch.optim.Optimizer):
         grads = [p.grad for group in self.param_groups for p in group["params"] if p.grad is not None]
         if not grads:
             return torch.tensor(0.0, device=shared_device)
-            
-        norm = torch.norm(
-            torch.stack([
-                ((torch.abs(p) if group["adaptive"] else 1.0) * p.grad).norm(p=2).to(shared_device)
-                for group in self.param_groups for p in group["params"]
-                if p.grad is not None
-            ]),
-            p=2
-        )
+        
+        # *** FIX: Use float32 for stability critical norm calculation ***
+        with torch.amp.autocast('cuda', dtype=torch.float32):
+            norm = torch.norm(
+                torch.stack([
+                    ((torch.abs(p) if group["adaptive"] else 1.0) * p.grad).norm(p=2).to(shared_device)
+                    for group in self.param_groups for p in group["params"]
+                    if p.grad is not None
+                ]),
+                p=2
+            )
         return norm
 
 class ModernTrainer:
@@ -84,9 +86,10 @@ class ModernTrainer:
     An advanced trainer class that encapsulates modern training techniques
     to combat overfitting and improve generalization.
     
-    Version 3 Changes:
-    - Corrected the SAM training loop logic to prevent instability and errors.
-    - Fixed config access for SAM hyperparameters.
+    Version 4 Changes:
+    - Increased AdamW epsilon for stability with AMP.
+    - Forced SAM's grad_norm calculation to float32.
+    - Added loss sanity check to skip unstable steps.
     """
     def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
         self.cfg = cfg
@@ -107,13 +110,14 @@ class ModernTrainer:
         ]
 
         # --- Base optimizer is AdamW, wrapped by SAM ---
-        # *** FIX: Correctly access nested config for SAM ***
         self.optimizer = SAM(
             param_groups, 
             torch.optim.AdamW, 
             rho=self.cfg.train.sam_rho,
             adaptive=self.cfg.train.sam_adaptive,
-            weight_decay=self.cfg.train.weight_decay
+            weight_decay=self.cfg.train.weight_decay,
+            # *** FIX: Increased epsilon for stability in mixed precision ***
+            eps=1e-7 
         )
 
         # --- Loss Function: CrossEntropy with Label Smoothing ---
@@ -168,12 +172,17 @@ class ModernTrainer:
             X_side, key_states, value_states, y = self._get_encoder_states(train_data)
             y_for_loss = select_target_type(y, self.cfg.train.criterion)
 
-            # --- *** NEW, STABLE SAM + AMP LOGIC *** ---
-            
             # --- First forward/backward pass (ascent step) ---
             with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                 y_pred = self.model(X_side, key_states, value_states)
                 loss1 = self.loss_fn(y_pred, y_for_loss)
+
+            # *** FIX: Sanity check the loss to prevent propagating NaNs ***
+            if not torch.isfinite(loss1):
+                print(f"Warning: Unstable loss detected: {loss1.item()}. Skipping step.")
+                self.optimizer.zero_grad(set_to_none=True)
+                continue
+
             self.scaler.scale(loss1).backward()
             
             # This step perturbs the weights to find a region of flat loss
@@ -187,11 +196,18 @@ class ModernTrainer:
 
             # The second step does the actual parameter update
             self.scaler.unscale_(self.optimizer.base_optimizer)
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
-            self.optimizer.second_step(zero_grad=True)
+            grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
             
-            self.scaler.update()
-            self.scheduler.step()
+            # Only step if the gradients are finite after clipping
+            if torch.isfinite(grad_norm):
+                self.optimizer.second_step(zero_grad=True)
+                self.scaler.update()
+                self.scheduler.step()
+            else:
+                print(f"Warning: Grad norm is not finite: {grad_norm}. Skipping optimizer step.")
+                # If grads are bad, we still need to zero them before the next step
+                self.optimizer.zero_grad(set_to_none=True)
+
             
             # Logging uses the first loss, as it's representative
             loss_val = loss1.item()
@@ -225,7 +241,7 @@ class ModernTrainer:
         return avg_val_loss, val_scores
 
     def train(self):
-        print("--- Starting SOTA Training (v3 - Corrected SAM Logic) ---")
+        print("--- Starting SOTA Training (v4 - Stabilized) ---")
         print(f"Optimizer: SAM(AdamW) | Scheduler: OneCycleLR | Loss: LabelSmoothing")
         print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp} | Clip Norm: {self.clip_grad_norm_value}")
         
