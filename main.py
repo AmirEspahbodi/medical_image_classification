@@ -52,24 +52,12 @@ def main(cfg):
     del frozen_encoder2
 
     print(f"type cfg = {type(cfg)}")
-    if cfg.network.model in ["coatnet_3"]:
-        frozen_encoder3, side_vit_model_3 = generate_model(cfg)
-        del frozen_encoder3
+    if cfg.network.model in ["coatnet_3", "coatnet_3_reg", "coatnet_4", "coatnet_5"]:
         match cfg.network.model:
             case "coatnet_3":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_3
-            case _:
-                raise RuntimeError()
-        classifier_with_side_vits = EnhancedSideViTClassifier(
-            side_vit1=side_vit_model1,
-            side_vit2=side_vit_model2,
-            cfg=cfg,
-        ).to(cfg.base.device)
-    elif cfg.network.model in ["coatnet_4", "coatnet_5"]:
-        frozen_encoder3, side_vit_model_3 = generate_model(cfg)
-        del frozen_encoder3
-
-        match cfg.network.model:
+            case "coatnet_3_reg":
+                EnhancedSideViTClassifier = CoAtNetSideViTClassifier_3_reg
             case "coatnet_4":
                 EnhancedSideViTClassifier = CoAtNetSideViTClassifier_4
             case "coatnet_5":
@@ -79,7 +67,6 @@ def main(cfg):
         classifier_with_side_vits = EnhancedSideViTClassifier(
             side_vit1=side_vit_model1,
             side_vit2=side_vit_model2,
-            side_vit3=side_vit_model_3,
             cfg=cfg,
         ).to(cfg.base.device)
     else:
