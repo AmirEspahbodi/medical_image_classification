@@ -195,38 +195,6 @@ def initialize_loss(cfg, train_dataset):
     return loss_function, loss_weight_scheduler
 
 
-# define optmizer
-def initialize_optimizer(cfg, model):
-    parameters = model.parameters()
-    solver = cfg.solver.optimizer
-    if solver == 'SGD':
-        optimizer = torch.optim.SGD(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            momentum=cfg.solver.momentum,
-            nesterov=cfg.solver.momentum,
-            weight_decay=cfg.solver.weight_decay
-        )
-    elif solver == 'ADAM':
-        optimizer = torch.optim.Adam(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            betas=cfg.solver.betas,
-            weight_decay=cfg.solver.weight_decay
-        )
-    elif solver == 'ADAMW':
-        optimizer = torch.optim.AdamW(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            betas=cfg.solver.betas,
-            weight_decay=cfg.solver.weight_decay
-        )
-    else:
-        raise NotImplementedError('Not implemented optimizer.')
-
-    return optimizer
-
-
 def adjust_learning_rate(cfg, optimizer, epoch):
     """Decays the learning rate with half-cycle cosine after warmup"""
     if epoch < cfg.train.warmup_epochs:
