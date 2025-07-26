@@ -15,8 +15,8 @@ train:
   backbone_lr: 1e-5
   learning_rate: 1e-4
   sam_rho: 0.05
-  sam_adaptive: True
+  sam_adaptive: true
   weight_decay: 0.01
   label_smoothing: 0.1
-  amp: True
+  amp: true
   early_stopping_patience: 4
