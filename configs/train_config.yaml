@@ -12,6 +12,13 @@ train:
   eval_interval: 1 # the epoch interval of evaluating model on val dataset
   sample_view: false # save and visualize a batch of images on Tensorboard
   pin_memory: true # enables fast data transfer to CUDA-enabled GPUs
+
+  # for plan B
   early_stopping_patience: 3
   label_smoothing: 0.1
   swa_start_epoch: 8
+
+  # for plan A
+  warmup_epochs: 2
+  # label_smoothing: 0.1
+  sam_start_epoch: 4
