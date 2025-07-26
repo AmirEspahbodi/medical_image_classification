@@ -15,3 +15,7 @@ train:
   early_stopping_patience: 3
   label_smoothing: 0.1
   swa_start_epoch: 10
+  backbone_lr: 1e-5
+  head_lr: 1e-4
+  swa_lr: 1e-3
+  weight_decay: 0.01 
