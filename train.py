@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 from src.utils.func import *
 from src.loss import *
 # Removed custom scheduler import as we now use torch.optim.lr_scheduler
-# from src.scheduler import *
+from src.scheduler import *
 
 def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     """
