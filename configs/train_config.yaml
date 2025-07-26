@@ -1,5 +1,5 @@
 train:
-  epochs: 10
+  epochs: 13
   batch_size: 16
   num_workers: 4
   criterion: cross_entropy # available criterions are list in 'criterion_args' below
@@ -14,7 +14,7 @@ train:
   pin_memory: true # enables fast data transfer to CUDA-enabled GPUs
   early_stopping_patience: 3
   label_smoothing: 0.1
-  swa_start_epoch: 10
+  swa_start_epoch: 8
   backbone_lr: 1e-5
   head_lr: 1e-4
   swa_lr: 1e-3
