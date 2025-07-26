@@ -14,7 +14,7 @@ train:
   pin_memory: true # enables fast data transfer to CUDA-enabled GPUs
 
   # for plan B
-  early_stopping_patience: 3
+  early_stopping_patience: 5
   label_smoothing: 0.1
   swa_start_epoch: 8
 
