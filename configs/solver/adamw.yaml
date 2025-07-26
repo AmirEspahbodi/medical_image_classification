@@ -5,6 +5,5 @@ head_lr: 1e-4
 swa_lr: 1e-3
 weight_decay: 0.01 
 
-# for plan A
-betas: [0.9, 0.999]
+# for plan A (SAM)
 rho: 0.05
