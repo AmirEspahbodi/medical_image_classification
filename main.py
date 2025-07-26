@@ -47,6 +47,8 @@ def main(cfg):
 
     train_dataset, test_dataset, val_dataset = generate_dataset(cfg)
     frozen_encoder, side_vit_model1 = generate_model(cfg)
+    print("0 0 0 0 0 0")
+    print(type(frozen_encoder))
     frozen_encoder2, side_vit_model2 = generate_model(cfg)
     del frozen_encoder2
 
