@@ -13,4 +13,4 @@ base:
   overwrite: false # overwrite save_path
   progress: true # real-time metric display, output cannot be redirected
   checkpoint: null # path to the checkpoint to resume
-  training_plan: B # A , B and C
+  training_plan: A # A , B and C
