@@ -106,6 +106,8 @@ def main(cfg):
         ).to(cfg.base.device)
 
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
+    print("1 1 1 1 1 1")
+    print(type(frozen_encoder))
     train(
         cfg=cfg,
         frozen_encoder=frozen_encoder,
