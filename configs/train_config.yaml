@@ -14,6 +14,7 @@ train:
   pin_memory: true # enables fast data transfer to CUDA-enabled GPUs
   backbone_lr: 1.0e-5
   head_lr: 1.0e-4
+  learning_rate: 1.0e-4
   sam_rho: 0.02
   sam_adaptive: true
   weight_decay: 0.01
