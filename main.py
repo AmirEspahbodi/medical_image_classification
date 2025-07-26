@@ -18,9 +18,11 @@ from src.builder import generate_model, load_weights
 from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3, CoAtNetSideViTClassifier_3_reg, CoAtNetSideViTClassifier_4, CoAtNetSideViTClassifier_5
 from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2, ResnetSideViTClassifier_3
 
-
+backbone_trainable_layers = []
+vit1_feature_strame = []
+vit2_feature_strame = []
 @hydra.main(config_path="configs", config_name="config")
-def main(cfg, backbone_trainable_layers, vit1_feature_strame, vit2_feature_strame):
+def main(cfg):
     # print configuration
     print_msg('LOADING CONFIG FILE')
     print(OmegaConf.to_yaml(cfg))
@@ -184,6 +186,9 @@ if __name__ == '__main__':
     parser.add_argument('-v2fs', '--vit2_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT2 feature stride, each between 1 and 4 (e.g., 2 3).')
     args, unknown_args = parser.parse_known_args()
-    print(args, unknown_args)
-
-    main(args.backbone_trainable_layers, args.vit1_feature_strame, args.vit2_feature_strame)
+    
+    backbone_trainable_layers = args.backbone_trainable_layers
+    vit1_feature_strame = args.vit1_feature_strame
+    vit2_feature_strame = args.vit2_feature_strame
+    
+    main()
