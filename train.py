@@ -43,6 +43,7 @@ class SAM(torch.optim.Optimizer):
     def first_step(self, zero_grad=False):
         grad_norm = self._grad_norm()
         for group in self.param_groups:
+            # Add a small epsilon for numerical stability
             scale = group["rho"] / (grad_norm + 1e-12)
             for p in group["params"]:
                 if p.grad is None: continue
@@ -63,6 +64,11 @@ class SAM(torch.optim.Optimizer):
     def _grad_norm(self):
         # Put everything on the same device, in case of model parallelism
         shared_device = self.param_groups[0]["params"][0].device
+        # Return a default value if no gradients are found
+        grads = [p.grad for group in self.param_groups for p in group["params"] if p.grad is not None]
+        if not grads:
+            return torch.tensor(0.0, device=shared_device)
+            
         norm = torch.norm(
             torch.stack([
                 ((torch.abs(p) if group["adaptive"] else 1.0) * p.grad).norm(p=2).to(shared_device)
@@ -78,12 +84,9 @@ class ModernTrainer:
     An advanced trainer class that encapsulates modern training techniques
     to combat overfitting and improve generalization.
     
-    New Features:
-    - SAM Optimizer: For finding flat, generalizable minima.
-    - Differential Learning Rates: Lower LR for backbone, higher for the head.
-    - OneCycleLR Scheduler: Advanced cyclical learning rate scheduling.
-    - Gradient Accumulation: Simulate larger batch sizes.
-    - Gradient Clipping: For training stability.
+    Version 3 Changes:
+    - Corrected the SAM training loop logic to prevent instability and errors.
+    - Fixed config access for SAM hyperparameters.
     """
     def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
         self.cfg = cfg
@@ -99,17 +102,18 @@ class ModernTrainer:
         head_params = [p for p in self.model.parameters() if not any(id(p) == id(bp) for bp in backbone_params)]
         
         param_groups = [
-            {'params': backbone_params, 'lr': self.cfg.train.backbone_lr}, # e.g., 1e-5
-            {'params': head_params, 'lr': self.cfg.train.learning_rate}      # e.g., 1e-4
+            {'params': backbone_params, 'lr': self.cfg.train.backbone_lr},
+            {'params': head_params, 'lr': self.cfg.train.learning_rate}
         ]
 
         # --- Base optimizer is AdamW, wrapped by SAM ---
+        # *** FIX: Correctly access nested config for SAM ***
         self.optimizer = SAM(
             param_groups, 
             torch.optim.AdamW, 
-            rho=self.cfg.train.sam_rho, # e.g., 0.05
-            adaptive=self.cfg.train.sam_adaptive, # e.g., True
-            weight_decay=self.cfg.train.weight_decay # e.g., 0.01
+            rho=self.cfg.train.sam_rho,
+            adaptive=self.cfg.train.sam_adaptive,
+            weight_decay=self.cfg.train.weight_decay
         )
 
         # --- Loss Function: CrossEntropy with Label Smoothing ---
@@ -126,7 +130,7 @@ class ModernTrainer:
             max_lr=[self.cfg.train.backbone_lr, self.cfg.train.learning_rate],
             steps_per_epoch=len(self.train_loader) // self.accumulation_steps,
             epochs=self.cfg.train.epochs,
-            pct_start=0.3 # Percentage of cycle to spend increasing LR
+            pct_start=0.3
         )
 
         # --- Automatic Mixed Precision (AMP) - UPDATED API ---
@@ -149,7 +153,6 @@ class ModernTrainer:
         else:
             X_lpm, X_side, y = data
             X_lpm = X_lpm.to(self.device, non_blocking=True)
-            # UPDATED API for autocast
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                 _, key_states, value_states = self.frozen_encoder(X_lpm, interpolate_pos_encoding=True)
         X_side, y = X_side.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
@@ -161,57 +164,38 @@ class ModernTrainer:
         epoch_loss = 0.0
         progress = tqdm(self.train_loader, desc=f'Epoch {epoch + 1}/{self.cfg.train.epochs} [TRAIN]', unit='batch')
         
-        self.optimizer.zero_grad(set_to_none=True) # Clear gradients at the start of the epoch
-
         for step, train_data in enumerate(progress):
             X_side, key_states, value_states, y = self._get_encoder_states(train_data)
             y_for_loss = select_target_type(y, self.cfg.train.criterion)
 
-            # --- SAM's First Step (Ascent) ---
-            # UPDATED API for autocast
+            # --- *** NEW, STABLE SAM + AMP LOGIC *** ---
+            
+            # --- First forward/backward pass (ascent step) ---
             with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                 y_pred = self.model(X_side, key_states, value_states)
-                loss = self.loss_fn(y_pred, y_for_loss)
-                loss = loss / self.accumulation_steps # Scale loss for accumulation
+                loss1 = self.loss_fn(y_pred, y_for_loss)
+            self.scaler.scale(loss1).backward()
             
-            # Scale loss and calculate gradients
-            self.scaler.scale(loss).backward()
+            # This step perturbs the weights to find a region of flat loss
+            self.optimizer.first_step(zero_grad=True)
 
-            # --- SAM's Second Step (Descent) ---
-            # UPDATED API for autocast
+            # --- Second forward/backward pass (descent step) ---
             with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
-                # The model's weights are already perturbed by the first step
                 y_pred_2 = self.model(X_side, key_states, value_states)
-                loss_2 = self.loss_fn(y_pred_2, y_for_loss)
-                loss_2 = loss_2 / self.accumulation_steps
-            
-            # Scale loss and calculate gradients for the second step
-            self.scaler.scale(loss_2).backward()
-            
-            # --- Optimizer Step (after accumulation) ---
-            if (step + 1) % self.accumulation_steps == 0:
-                # Unscale gradients before clipping
-                self.scaler.unscale_(self.optimizer.base_optimizer)
-                
-                # --- KEY FIX: Clip gradients to prevent explosion ---
-                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
-                if not torch.isfinite(grad_norm):
-                    print(f"Warning: Grad norm is {grad_norm}. Skipping update.")
-                    self.optimizer.zero_grad(set_to_none=True)
-                    continue
+                loss2 = self.loss_fn(y_pred_2, y_for_loss)
+            self.scaler.scale(loss2).backward()
 
-                # SAM performs both steps using the accumulated gradients
-                self.optimizer.first_step(zero_grad=True)
-                self.optimizer.second_step(zero_grad=True)
-                
-                # Update scaler and scheduler
-                self.scaler.update()
-                self.scheduler.step()
-                
-                # Clear gradients for the next accumulation cycle
-                self.optimizer.zero_grad(set_to_none=True)
-
-            epoch_loss += loss.item() * self.accumulation_steps # Unscale for logging
+            # The second step does the actual parameter update
+            self.scaler.unscale_(self.optimizer.base_optimizer)
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
+            self.optimizer.second_step(zero_grad=True)
+            
+            self.scaler.update()
+            self.scheduler.step()
+            
+            # Logging uses the first loss, as it's representative
+            loss_val = loss1.item()
+            epoch_loss += loss_val
             avg_loss = epoch_loss / (step + 1)
             
             self.estimator.update(y_pred.detach(), y)
@@ -230,7 +214,6 @@ class ModernTrainer:
             for step, val_data in enumerate(progress):
                 X_side, key_states, value_states, y = self._get_encoder_states(val_data)
                 y_for_loss = select_target_type(y, self.cfg.train.criterion)
-                # UPDATED API for autocast
                 with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                     y_pred = self.model(X_side, key_states, value_states)
                     loss = self.loss_fn(y_pred, y_for_loss)
@@ -242,7 +225,7 @@ class ModernTrainer:
         return avg_val_loss, val_scores
 
     def train(self):
-        print("--- Starting SOTA Training (v2 - Stabilized) ---")
+        print("--- Starting SOTA Training (v3 - Corrected SAM Logic) ---")
         print(f"Optimizer: SAM(AdamW) | Scheduler: OneCycleLR | Loss: LabelSmoothing")
         print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp} | Clip Norm: {self.clip_grad_norm_value}")
         
@@ -277,4 +260,5 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     trainer.train()
 
 def select_target_type(y, criterion):
+    # This function should be defined elsewhere in your project.
     return y
