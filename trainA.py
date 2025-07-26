@@ -169,7 +169,7 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     print("--- SWA model BN stats updated. Saving final model. ---")
 
     # Save the final SWA model
-    save_weights(cfg, swa_model, 'swa_model_final_weights.pt')
+    save_weights(cfg, swa_model, 'final_weights.pt')
 
     # Return the SWA model for final evaluation
     return swa_model
