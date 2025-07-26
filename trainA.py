@@ -249,8 +249,8 @@ def initialize_loss(cfg, train_dataset):
     else:
         raise NotImplementedError('Not implemented loss function.')
 
-    loss_function = WarpedLoss(loss, criterion)
-    return loss_function, loss_weight_scheduler
+    # loss_function = WarpedLoss(loss, criterion)
+    return loss, loss_weight_scheduler
 
 
 def adjust_learning_rate(cfg, optimizer, epoch):
