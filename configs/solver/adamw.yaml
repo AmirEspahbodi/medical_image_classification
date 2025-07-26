@@ -1,6 +1,5 @@
 optimizer: ADAMW
 betas: [0.9, 0.999]
-optimizer: 'ADAMW'
 backbone_lr: 1e-5
 head_lr: 1e-4
 swa_lr: 1e-3
