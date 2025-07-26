@@ -79,6 +79,9 @@ class ModernTrainer:
     def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
         self.cfg = cfg
         self.device = cfg.base.device
+        print("3 3 3 3 3 3 3 3")
+        print(type(model))
+        print(type(frozen_encoder))
         self.model = model.to(self.device)
         self.frozen_encoder = frozen_encoder.to(self.device)
         self.estimator = estimator
@@ -236,6 +239,8 @@ class ModernTrainer:
         save_weights(self.model, os.path.join(self.cfg.dataset.save_path, 'final_weights.pt'))
 
 def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
+    print("2 2 2 2 2 2 2")
+    print(type(frozen_encoder))
     trainer = ModernTrainer(cfg, model, frozen_encoder, train_dataset, val_dataset, estimator)
     trainer.train()
 
