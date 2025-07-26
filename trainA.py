@@ -162,7 +162,7 @@ def save_plots(cfg, history, save_path):
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_loss_plot.png'))
+    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_plana_loss_plot.png'))
     plt.close()
 
     plt.figure(figsize=(10, 6))
@@ -173,7 +173,7 @@ def save_plots(cfg, history, save_path):
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_accuracy_plot.png'))
+    plt.savefig(os.path.join(save_path, f'{cfg.network.model}_plana_accuracy_plot.png'))
     plt.close()
     print(f"Performance plots saved to {save_path}")
 
