@@ -332,7 +332,7 @@ class MultiScaleCoAtNetBackbone(nn.Module):
             pretrained=pretrained,
             in_chans=in_chans,
             features_only=True,
-            out_indices=(1, 2, 3, 4) # We need blocks 2, 3, and 4
+            out_indices=(1, 2, 3, 4)
         )
 
         # --- Freeze the backbone parameters ---
@@ -418,9 +418,8 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
         # Define the combined feature dimensions for each stream
-        stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1]
-        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
-        stream3_dim = COATNET_DIMS[2] + COATNET_DIMS[3]
+        stream1_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
+        stream2_dim = COATNET_DIMS[2] + COATNET_DIMS[3]
 
         # --- Stream 1 Components (Blocks 1+2) ---
         self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
@@ -483,9 +482,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         attended_patches1 = self.norm_attended_patch1(attended_patches1 + image_patches) # Residual
         reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
         vit_features1 = self.side_vit1(reconstructed_img1, key_states, value_states)
-
-
-
+        
         # --- Stream 2 ---
         attended_patches2 = self.fusion_stream2(image_patches, stream2_vec)
         attended_patches2 = self.norm_attended_patch2(attended_patches2 + image_patches) # Residual
@@ -495,6 +492,7 @@ class CoAtNetSideViTClassifier_3(nn.Module):
         combined_features = torch.cat([vit_features1, vit_features2], dim=1)
         final_logits = self.classification_head(combined_features)
         return final_logits
+    
     def reconstruct_from_patches(self, patches, height, width):
         """Helper function to turn patches back into an image-like tensor."""
         patches_reshaped = patches.transpose(1, 2).reshape(patches.shape[0], self.patch_dim, height, width)
@@ -527,9 +525,9 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
         NUM_HEADS = 8
         NUM_VIT_STREAMS = 2
 
-        # ⬆️ INCREASED DROPOUT for stronger regularization
+        # INCREASED DROPOUT for stronger regularization
         DROPOUT_RATE = 0.5
-        # ✨ NEW: Stochastic Depth Rate for dropping residual paths
+        # Stochastic Depth Rate for dropping residual paths
         STOCHASTIC_DEPTH_RATE = 0.2
 
         # --- Feature dimensions from CoAtNet-0 blocks (stages 1, 2, 3, 4) ---
@@ -542,8 +540,8 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
         # --- Core Components ---
         self.cnn_backbone = MultiScaleCoAtNetBackbone(model_name=BACKBONE_MODEL, pretrained=pretrained, in_chans=cfg.dataset.image_channel_num)
 
-        stream1_dim = COATNET_DIMS[0] + COATNET_DIMS[1]
-        stream2_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
+        stream1_dim = COATNET_DIMS[1] + COATNET_DIMS[2]
+        stream2_dim = COATNET_DIMS[2] + COATNET_DIMS[3]
 
         self.fusion_stream1 = CrossAttentionFusion3(stream1_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit1 = side_vit1
@@ -551,14 +549,12 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
         self.fusion_stream2 = CrossAttentionFusion3(stream2_dim, self.patch_dim, NUM_HEADS, DROPOUT_RATE)
         self.side_vit2 = side_vit2
 
-        # ✨ NEW: DropPath layers
         # Creates a linearly increasing drop probability for subsequent stages
         dpr = [x.item() for x in torch.linspace(0, STOCHASTIC_DEPTH_RATE, NUM_VIT_STREAMS)]
         self.drop_path1 = DropPath(dpr[0]) if STOCHASTIC_DEPTH_RATE > 0. else nn.Identity()
         self.drop_path2 = DropPath(dpr[1]) if STOCHASTIC_DEPTH_RATE > 0. else nn.Identity()
         print(f"--- Stochastic Depth enabled with rates: {dpr} ---")
 
-        # 👇 SIMPLIFIED Classification Head
         # A simpler head with fewer parameters is less prone to overfitting.
         self.classification_head = nn.Sequential(
             nn.LayerNorm(NUM_CLASSES * NUM_VIT_STREAMS),
@@ -593,8 +589,8 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
         f1, f2, f3, f4 = self.cnn_backbone(x_resized_for_backbone)
 
         # 2. Process feature pairs for each stream
-        stream1_vec = self.process_feature_pair(f1, f2)
-        stream2_vec = self.process_feature_pair(f2, f3)
+        stream1_vec = self.process_feature_pair(f2, f3)
+        stream2_vec = self.process_feature_pair(f3, f4)
 
         # 3. Convert input image to a sequence of patches
         image_patches_raw = self.patchify(x)
@@ -605,7 +601,6 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
         # 4. Process through parallel attention streams with regularization
         # --- Stream 1 ---
         attended_patches1 = self.fusion_stream1(image_patches, stream1_vec)
-        # ✨ APPLY DROP PATH ON THE RESIDUAL CONNECTION
         attended_patches1 = image_patches + self.drop_path1(attended_patches1)
         attended_patches1 = self.norm_attended_patch1(attended_patches1)
         reconstructed_img1 = self.reconstruct_from_patches(attended_patches1, H, W)
@@ -613,7 +608,6 @@ class CoAtNetSideViTClassifier_3_reg(nn.Module):
 
         # --- Stream 2 ---
         attended_patches2 = self.fusion_stream2(image_patches, stream2_vec)
-        # ✨ APPLY DROP PATH ON THE RESIDUAL CONNECTION
         attended_patches2 = image_patches + self.drop_path2(attended_patches2)
         attended_patches2 = self.norm_attended_patch2(attended_patches2)
         reconstructed_img2 = self.reconstruct_from_patches(attended_patches2, H, W)
@@ -713,77 +707,47 @@ class SpatialCrossAttention(nn.Module):
         return self.norm(fused_feat)
 
 
-class CrossAttentionFusion(nn.Module):
-    """
-    Fuses multiple 1D feature vectors (e.g., from parallel ViT outputs) using multi-head cross-attention.
-    """
-    def __init__(self, embed_dim: int, num_heads: int):
-        super().__init__()
-        self.attention = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(embed_dim)
-
-    def forward(self, query_feat: torch.Tensor, context_feat: torch.Tensor) -> torch.Tensor:
-        query_feat_seq = query_feat.unsqueeze(1)
-        context_feat_seq = context_feat.view(query_feat.shape[0], -1, query_feat.shape[-1])
-        attn_output, _ = self.attention(query=query_feat_seq, key=context_feat_seq, value=context_feat_seq)
-        fused_feat = attn_output.squeeze(1)
-        return self.norm(fused_feat + query_feat)
-
-
 class CoAtNetSideViTClassifier_4(nn.Module):
-    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
+    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, cfg: Any):
         super().__init__()
         print("CoAtNetSideViTClassifier_4")
         self.cfg = cfg
         self.num_classes = cfg.dataset.num_classes
         
         # --- Backbone: CoAtNet ---
-        self.backbone = timm.create_model(
+        self.backbone_cnn = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
             drop_path_rate=0.1
         )
-        for param in self.backbone.parameters():
+        for param in self.backbone_cnn.parameters():
             param.requires_grad = False
 
-        for name, param in self.backbone.named_parameters():
+        for name, param in self.backbone_cnn.named_parameters():
             if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
                 param.requires_grad = True
         
-        feat_dims = self.backbone.feature_info.channels()
+        feat_dims = self.backbone_cnn.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
         NUM_VIT_STREAMS = 2
         
         # --- Feature Preparation Paths ---
-        self.gate1 = GatedAttentionModule(c1, c2, 64)
-        self.gate2 = GatedAttentionModule(c2, c3, 64)
-        self.gate3 = GatedAttentionModule(c3, c4, 64)
+        self.gate1 = GatedAttentionModule(c2, c3, 64)
+        self.gate2 = GatedAttentionModule(c3, c4, 64)
 
         proj_channels = 64
-        self.proj_sv2 = nn.Conv2d(c3, proj_channels, kernel_size=1, bias=False)
-        self.proj_sv3 = nn.Conv2d(c4, proj_channels, kernel_size=1, bias=False)
+        self.proj_sv1 = nn.Conv2d(c3, proj_channels, kernel_size=1, bias=False)
+        self.proj_sv2 = nn.Conv2d(c4, proj_channels, kernel_size=1, bias=False)
                 
         # --- Spatial Cross-Attention Fusion for ViT Inputs ---
         self.spatial_fusion1 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
         self.spatial_fusion2 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
-        self.spatial_fusion3 = SpatialCrossAttention(64, cfg.dataset.image_channel_num, cfg.dataset.image_channel_num)
     
         # --- Side-ViT Modules ---
         self.side_vit1 = side_vit1
         self.side_vit2 = side_vit2
-        self.side_vit3 = side_vit3
 
         # --- Fusion of Side-ViT Outputs ---
-        # self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
-
-        # self.classifier_head = nn.Sequential(
-        #     nn.LayerNorm(self.num_classes),
-        #     nn.Linear(self.num_classes, self.num_classes * 2),
-        #     nn.GELU(),
-        #     nn.Dropout(0.2),
-        #     nn.Linear(self.num_classes * 2, self.num_classes)
-        # )
-        # --- Final Classifier Head ---
         self.classifier_head = nn.Sequential(
             nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
             nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
@@ -794,31 +758,25 @@ class CoAtNetSideViTClassifier_4(nn.Module):
 
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor: # Accept extra args to match user's call
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        features = self.backbone(x_backbone)
+        features = self.backbone_cnn(x_backbone)
         f1, f2, f3, f4 = features[0], features[1], features[2], features[3]
 
-        # proc_feat1 = self.gate1(f1, f2)
-        proc_feat2 = self.gate2(f2, f3)
-        # proc_feat3 = self.gate2(f3, f4)
-        # proc_feat2 = self.proj_sv2(f3)
-        proc_feat3 = self.proj_sv3(f4)
+        proc_feat1 = self.gate1(f2, f3)
+        # proc_feat2 = self.gate2(f2, f3)
+        # proc_feat2 = self.proj_sv1(f2)
+        proc_feat2 = self.proj_sv2(f4)
         
         # [FIX] Pass raw image 'x' directly. Resizing is now handled inside SpatialCrossAttention.
-        # vit_input1 = self.spatial_fusion1(proc_feat1, x)
+        vit_input1 = self.spatial_fusion1(proc_feat1, x)
         vit_input2 = self.spatial_fusion2(proc_feat2, x)
-        vit_input3 = self.spatial_fusion3(proc_feat3, x)
         
-        # vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
+        vit_input1 = F.interpolate(vit_input1, size=(128, 128), mode='bilinear', align_corners=False)
         vit_input2 = F.interpolate(vit_input2, size=(128, 128), mode='bilinear', align_corners=False)
-        vit_input3 = F.interpolate(vit_input3, size=(128, 128), mode='bilinear', align_corners=False)
 
-        # vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
-        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
-        # context_features = torch.stack([vit_out2, vit_out3], dim=1)
-        # fused_output = self.output_fusion(vit_out1, context_features)
-        features = torch.cat([vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out1, vit_out2], dim=1)
         logits = self.classifier_head(features)
         return logits
 
@@ -829,64 +787,42 @@ class CoAtNetSideViTClassifier_5(nn.Module):
     An alternative hybrid classifier that uses simple concatenation for input fusion.
     (OPTION 2: Concatenates downsampled processed features and raw image)
     """
-    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, side_vit3: nn.Module, cfg: Any):
+    def __init__(self, side_vit1: nn.Module, side_vit2: nn.Module, cfg: Any):
         super().__init__()
         print("CoAtNetSideViTClassifier_5")
         self.cfg = cfg
         self.num_classes = cfg.dataset.num_classes
         
-        # self.backbone = timm.create_model(
-        #     'coatnet_0_rw_224', pretrained=True, features_only=True,
-        #     drop_path_rate=0.2
-        # )
-        self.backbone = timm.create_model(
+        self.backbone_cnn = timm.create_model(
             'coatnet_0_rw_224', pretrained=True, features_only=True,
             out_indices=(1, 2, 3, 4), # We need blocks 2, 3, and 4
             drop_path_rate=0.2
         )
-        for param in self.backbone.parameters():
+        for param in self.backbone_cnn.parameters():
             param.requires_grad = False
-        for name, param in self.backbone.named_parameters():
+        for name, param in self.backbone_cnn.named_parameters():
             if any([f'blocks.{i}' in name for i in (2, 3)]):
                 param.requires_grad = True
 
         NUM_VIT_STREAMS = 2
         in_ch = 3
-        feat_dims = self.backbone.feature_info.channels()
+        feat_dims = self.backbone_cnn.feature_info.channels()
         c1, c2, c3, c4 = feat_dims[0], feat_dims[1], feat_dims[2], feat_dims[3]
 
         # [FIX] Project processed features to 3 channels to match the expected input
         self.gate1 = GatedAttentionModule(c1, c2, 64)
         self.proj1 = nn.Conv2d(64, 3, kernel_size=1)
         
-        self.gate2 = GatedAttentionModule(c2, c3, 64)
+        self.gate2 = GatedAttentionModule(c3, c4, 64)
         self.proj2 = nn.Conv2d(64, 3, kernel_size=1)
 
-        self.gate3 = GatedAttentionModule(c3, c4, 64)
-        self.proj3 = nn.Conv2d(64, 3, kernel_size=1)
 
-        self.proj_sv1 = nn.Conv2d(c2, in_ch, kernel_size=1, bias=False)
-        self.proj_sv2 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
-        self.proj_sv3 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
-        
-        self.proj3_seq = nn.Sequential(
-            nn.Conv2d(c4, 64, kernel_size=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.Conv2d(64, 3, kernel_size=1)
-        )
-        
+        self.proj_sv1 = nn.Conv2d(c3, in_ch, kernel_size=1, bias=False)
+        self.proj_sv2 = nn.Conv2d(c4, in_ch, kernel_size=1, bias=False)
         
         # Side-ViTs now expect 2 channels: 1 from processed features, 1 from raw image
-        self.side_vit1, self.side_vit2, self.side_vit3 = side_vit1, side_vit2, side_vit3
+        self.side_vit1, self.side_vit2 = side_vit1, side_vit2
         
-        # self.output_fusion = CrossAttentionFusion(embed_dim=self.num_classes, num_heads=1)
-        
-        # self.classifier_head = nn.Sequential(
-        #     nn.LayerNorm(self.num_classes),
-        #     nn.Linear(self.num_classes, self.num_classes * 2),
-        #     nn.GELU(),
-        #     nn.Dropout(0.2),
-        #     nn.Linear(self.num_classes * 2, self.num_classes)
-        # )
         self.classifier_head = nn.Sequential(
             nn.LayerNorm(self.num_classes * NUM_VIT_STREAMS),
             nn.Linear(self.num_classes * NUM_VIT_STREAMS, self.num_classes * NUM_VIT_STREAMS * 2),
@@ -897,44 +833,32 @@ class CoAtNetSideViTClassifier_5(nn.Module):
     
     def forward(self, x: torch.Tensor, key_states, value_states) -> torch.Tensor:
         x_backbone = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        features = self.backbone(x_backbone)
+        features = self.backbone_cnn(x_backbone)
         f1, f2, f3, f4 = features[0], features[1], features[2], features[3]
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        # proc_feat2 = self.proj2(self.gate2(f2, f3))
-        # proc_feat3 = self.proj3(self.gate3(f3, f4))
+        # proc_feat2 = self.proj2(self.gate2(f3, f4))
 
-        # proc_feat1 = self.proj_sv1(f2)
-        proc_feat2 = self.proj_sv2(f3)
-        proc_feat3 = self.proj_sv3(f4)
+        proc_feat1 = self.proj_sv1(f3)
+        proc_feat2 = self.proj_sv2(f4)
         
         
         # Downsample processed features and raw image to 64x64
         vit_input_size = (64, 64)
         
-        # proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
+        proc_feat1_res = F.interpolate(proc_feat1, size=vit_input_size, mode='bilinear', align_corners=False)
         proc_feat2_res = F.interpolate(proc_feat2, size=vit_input_size, mode='bilinear', align_corners=False)
-        proc_feat3_res = F.interpolate(proc_feat3, size=vit_input_size, mode='bilinear', align_corners=False)
         
         x_resized = F.interpolate(x, size=vit_input_size, mode='bilinear', align_corners=False)
 
         # [FIX] Fuse by addition instead of concatenation to maintain 3 channels
-        # vit_input1 = proc_feat1_res + x_resized
+        vit_input1 = proc_feat1_res + x_resized
         vit_input2 = proc_feat2_res + x_resized
-        vit_input3 = proc_feat3_res + x_resized
 
-        # vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
+        vit_out1 = self.side_vit1(vit_input1, key_states, value_states)
         vit_out2 = self.side_vit2(vit_input2, key_states, value_states)
-        vit_out3 = self.side_vit3(vit_input3, key_states, value_states)
         
-        # context_features = torch.stack([vit_out2, vit_out3], dim=1)
-        # fused_output = self.output_fusion(vit_out1, context_features)
-        
-        features = torch.cat([vit_out2, vit_out3], dim=1)
+        features = torch.cat([vit_out1, vit_out2], dim=1)
         logits = self.classifier_head(features)
         return logits
-
-################################################################################################################################################################
-
-
