@@ -184,5 +184,6 @@ if __name__ == '__main__':
     parser.add_argument('-v2fs', '--vit2_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT2 feature stride, each between 1 and 4 (e.g., 2 3).')
     args, unknown_args = parser.parse_known_args()
+    print(args, unknown_args)
 
     main(args.btl, args.v1fs, args.v2fs)
