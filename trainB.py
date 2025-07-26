@@ -186,10 +186,46 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
             max_indicator = indicator
             save_weights(cfg, model, 'best_validation_weights.pt')
 
-
+    save_plots(history, cfg.dataset.save_path)
+    
     save_weights(cfg, model, 'final_weights.pt')
     print("--- Training finished. Final model saved. ---")
     return model
+
+# ✨ New plotting function
+def save_plots(history, save_path):
+    """Saves plots for training/validation loss and accuracy."""
+    print("--- Generating and saving performance plots... ---")
+    
+    epochs = range(1, len(history['train_loss']) + 1)
+    
+    # Plot 1: Loss
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, history['train_loss'], 'b-o', label='Training Loss')
+    plt.plot(epochs, history['val_loss'], 'r-o', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    loss_plot_path = os.path.join(save_path, 'loss_plot.png')
+    plt.savefig(loss_plot_path)
+    plt.close()
+    print(f"Loss plot saved to {loss_plot_path}")
+
+    # Plot 2: Accuracy
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, history['train_acc'], 'b-o', label='Training Accuracy')
+    plt.plot(epochs, history['val_acc'], 'r-o', label='Validation Accuracy')
+    plt.title('Training and Validation Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    acc_plot_path = os.path.join(save_path, 'accuracy_plot.png')
+    plt.savefig(acc_plot_path)
+    plt.close()
+    print(f"Accuracy plot saved to {acc_plot_path}")
 
 # --- 3. Helper Function Modifications for Plan A ---
 
@@ -276,11 +312,14 @@ def initialize_dataloader(cfg, train_dataset, val_dataset):
     val_loader = DataLoader(val_dataset, batch_size=cfg.train.batch_size, shuffle=False, num_workers=cfg.train.num_workers)
     return train_loader, val_loader
 
-def eval(cfg, frozen_encoder, model, dataloader, estimator, device):
-    # This function remains unchanged from your original code
+# ✨ Modified eval function to return loss
+def eval(cfg, frozen_encoder, model, dataloader, estimator, device, loss_function):
     model.eval()
     torch.set_grad_enabled(False)
+    
     estimator.reset()
+    total_loss = 0.0
+    
     for test_data in dataloader:
         if cfg.dataset.preload_path:
             X_side, key_states, value_states, y = test_data
@@ -291,12 +330,25 @@ def eval(cfg, frozen_encoder, model, dataloader, estimator, device):
             X_lpm = X_lpm.to(device)
             with torch.no_grad():
                 _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
+        
         X_side, y = X_side.to(device), y.to(device)
-        y = select_target_type(y, cfg.train.criterion)
+        y_true = select_target_type(y, cfg.train.criterion)
+        
         y_pred = model(X_side, key_states, value_states)
-        estimator.update(y_pred, y)
+        
+        # Calculate loss for the batch
+        loss = loss_function(y_pred, y_true)
+        total_loss += loss.item()
+        
+        estimator.update(y_pred, y_true)
+        
     model.train()
     torch.set_grad_enabled(True)
+    
+    avg_loss = total_loss / len(dataloader)
+    scores = estimator.get_scores(6)
+    
+    return avg_loss, scores
 
 def save_weights(cfg, model, save_name):
     # This function remains unchanged
