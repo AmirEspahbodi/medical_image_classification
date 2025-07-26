@@ -850,7 +850,7 @@ class CoAtNetSideViTClassifier_5(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = False
         for name, param in self.backbone.named_parameters():
-            if any([f'blocks.{i}' in name for i in (1, 2, 3)]):
+            if any([f'blocks.{i}' in name for i in (2, 3)]):
                 param.requires_grad = True
 
         NUM_VIT_STREAMS = 2
@@ -905,12 +905,12 @@ class CoAtNetSideViTClassifier_5(nn.Module):
 
         # Prepare 3-channel processed features
         # proc_feat1 = self.proj1(self.gate1(f1, f2))
-        proc_feat2 = self.proj2(self.gate2(f2, f3))
-        proc_feat3 = self.proj3(self.gate3(f3, f4))
+        # proc_feat2 = self.proj2(self.gate2(f2, f3))
+        # proc_feat3 = self.proj3(self.gate3(f3, f4))
 
         # proc_feat1 = self.proj_sv1(f2)
-        # proc_feat2 = self.proj_sv2(f3)
-        # proc_feat3 = self.proj_sv3(f4)
+        proc_feat2 = self.proj_sv2(f3)
+        proc_feat3 = self.proj_sv3(f4)
         
         
         # Downsample processed features and raw image to 64x64
