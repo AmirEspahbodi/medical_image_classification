@@ -131,9 +131,9 @@ class ModernTrainer:
         # --- Scheduler: Reverted to CosineAnnealing for better stability ---
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer.base_optimizer,
-            T_0=self.cfg.train.scheduler.t0,
-            T_mult=self.cfg.train.scheduler.t_mult,
-            eta_min=self.cfg.train.scheduler.eta_min
+            T_0=self.cfg.train.scheduler_t0,
+            T_mult=self.cfg.train.scheduler_t_mult,
+            eta_min=self.cfg.train.scheduler_eta_min
         )
 
         # --- Automatic Mixed Precision (AMP) - UPDATED API ---
