@@ -109,6 +109,8 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     
     sam_start_epoch = cfg.train.sam_start_epoch
     max_indicator = 0
+
+    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
     
     print("--- Starting Training with Plan A (SAM Optimizer) ---")
     model.train()
@@ -166,13 +168,24 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
         # --- Validation & Saving Best Model ---
         eval(cfg, frozen_encoder, model, val_loader, estimator, device)
         val_scores = estimator.get_scores(6)
-        print(f"\nEpoch {epoch+1} Validation Metrics: {val_scores}")
+
+        avg_train_loss = epoch_loss / len(train_loader)
+        train_scores = estimator.get_scores(4)
+        history['train_loss'].append(avg_train_loss)
+        history['train_acc'].append(train_scores.get(cfg.train.indicator, 0)) # Use the main indicator metric
+        
+        val_loss, val_scores = eval(cfg, frozen_encoder, model, val_loader, estimator, device, loss_function)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_scores.get(cfg.train.indicator, 0))
+        
+        print(f"\nEpoch {epoch+1} Train Loss: {avg_train_loss:.4f}, Train Acc: {train_scores.get(cfg.train.indicator, 0):.4f}")
+        print(f"Epoch {epoch+1} Val Loss:   {val_loss:.4f}, Val Acc:   {val_scores.get(cfg.train.indicator, 0):.4f}")
 
         indicator = val_scores[cfg.train.indicator]
         if indicator > max_indicator:
             max_indicator = indicator
             save_weights(cfg, model, 'best_validation_weights.pt')
-            print(f"🚀 New best model saved with {cfg.train.indicator}: {max_indicator:.4f}")
+
 
     save_weights(cfg, model, 'final_weights.pt')
     print("--- Training finished. Final model saved. ---")
