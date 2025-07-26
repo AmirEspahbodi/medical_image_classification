@@ -125,7 +125,7 @@ class ModernTrainer:
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp)
 
         # --- 7. Early Stopping ---
-        self.early_stopping_patience = self.cfg.train.early_stopping.patience
+        self.early_stopping_patience = self.cfg.train.early_stopping_patience
         self.epochs_no_improve = 0
         self.best_metric = -1.0
 
