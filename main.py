@@ -18,9 +18,7 @@ from src.builder import generate_model, load_weights
 from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3, CoAtNetSideViTClassifier_3_reg, CoAtNetSideViTClassifier_4, CoAtNetSideViTClassifier_5
 from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2, ResnetSideViTClassifier_3
 
-backbone_trainable_layers = []
-vit1_feature_strame = []
-vit2_feature_strame = []
+
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg):
     # print configuration
@@ -33,40 +31,46 @@ def main(cfg):
     validation_passed = True
 
     # Validate backbone_trainable_layers (btl)
-    # Ensure it's a list and all values are within the allowed range
-    if not all(x in [1, 2, 3, 4] for x in backbone_trainable_layers):
-        print(f"ERROR: Invalid 'backbone_trainable_layers': {backbone_trainable_layers}. All values must be in [1, 2, 3, 4].")
-        validation_passed = False
-    else:
-        print(f"  - OK: Backbone trainable layers set to: {backbone_trainable_layers}")
+    if hasattr(cfg.network, 'backbone_trainable_layers'):
+        btl = cfg.network.backbone_trainable_layers
+        # Ensure it's a list and all values are within the allowed range
+        if not isinstance(btl, ListConfig) or not all(x in [1, 2, 3, 4] for x in btl):
+            print(f"ERROR: Invalid 'backbone_trainable_layers': {btl}. All values must be in [1, 2, 3, 4].")
+            validation_passed = False
+        else:
+            print(f"  - OK: Backbone trainable layers set to: {btl}")
 
     # Validate vit1_feature_strame (v1fs)
-    # Ensure it's a list of two numbers, each between 1 and 4
-    if len(vit1_feature_strame) != 2 or not all(1 <= x <= 4 for x in vit1_feature_strame):
-        print(f"ERROR: Invalid 'vit1_feature_strame': {vit1_feature_strame}. Must be two numbers, each between 1 and 4.")
-        validation_passed = False
-    else:
-        print(f"  - OK: ViT1 Feature Strame set to: {vit1_feature_strame}")
+    if hasattr(cfg.network, 'vit1_feature_strame'):
+        v1fs = cfg.network.vit1_feature_strame
+        # Ensure it's a list of two numbers, each between 1 and 4
+        if not isinstance(v1fs, ListConfig) or len(v1fs) != 2 or not all(1 <= x <= 4 for x in v1fs):
+            print(f"ERROR: Invalid 'vit1_feature_strame': {v1fs}. Must be two numbers, each between 1 and 4.")
+            validation_passed = False
+        else:
+            print(f"  - OK: ViT1 Feature Strame set to: {v1fs}")
 
     # Validate vit2_feature_strame (v2fs)
-
-    if len(vit2_feature_strame) != 2 or not all(1 <= x <= 4 for x in vit2_feature_strame):
-        print(f"ERROR: Invalid 'vit2_feature_strame': {vit2_feature_strame}. Must be two numbers, each between 1 and 4.")
-        validation_passed = False
-    else:
-        print(f"  - OK: ViT2 Feature Strame set to: {vit2_feature_strame}")
+    if hasattr(cfg.network, 'vit2_feature_strame'):
+        v2fs = cfg.network.vit2_feature_strame
+        # Ensure it's a list of two numbers, each between 1 and 4
+        if not isinstance(v2fs, ListConfig) or len(v2fs) != 2 or not all(1 <= x <= 4 for x in v2fs):
+            print(f"ERROR: Invalid 'vit2_feature_strame': {v2fs}. Must be two numbers, each between 1 and 4.")
+            validation_passed = False
+        else:
+            print(f"  - OK: ViT2 Feature Strame set to: {v2fs}")
 
     if not validation_passed:
         print_msg("Argument validation failed. Exiting.", warning=True)
         sys.exit(1)
     # --- End of new validation block ---
     
-    print(backbone_trainable_layers)
-    print(vit1_feature_strame)
-    print(vit2_feature_strame)
-    print(type(backbone_trainable_layers))
-    print(type(vit1_feature_strame))
-    print(type(vit2_feature_strame))
+    print(cfg.network.backbone_trainable_layers)
+    print(cfg.network.vit1_feature_strame)
+    print(cfg.network.vit2_feature_strame)
+    print(type(cfg.network.backbone_trainable_layers))
+    print(type(cfg.network.vit1_feature_strame))
+    print(type(cfg.network.vit2_feature_strame))
 
 
     # create folder
@@ -179,16 +183,27 @@ def set_seed(seed, deterministic=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run training with custom arguments for Hydra.")
-    parser.add_argument('-btl', '--backbone_trainable_layers', type=int, nargs='+',
+    parser.add_argument('--btl', '--backbone_trainable_layers', type=int, nargs='+',
                         help='List of backbone layers to train (e.g., 1 2 3 4).')
-    parser.add_argument('-v1fs', '--vit1_feature_strame', type=int, nargs=2,
+    parser.add_argument('--v1fs', '--vit1_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT1 feature stride, each between 1 and 4 (e.g., 1 4).')
-    parser.add_argument('-v2fs', '--vit2_feature_strame', type=int, nargs=2,
+    parser.add_argument('--v2fs', '--vit2_feature_strame', type=int, nargs=2,
                         help='Two numbers for ViT2 feature stride, each between 1 and 4 (e.g., 2 3).')
     args, unknown_args = parser.parse_known_args()
-    
-    backbone_trainable_layers = args.backbone_trainable_layers
-    vit1_feature_strame = args.vit1_feature_strame
-    vit2_feature_strame = args.vit2_feature_strame
-    
+
+    hydra_overrides = []
+    if args.btl is not None:
+        btl_str = '[' + ','.join(map(str, )) + ']'
+        hydra_overrides.append(f'network.backbone_trainable_layers={btl_str}')
+
+    if args.v1fs is not None:
+        v1fs_str = '[' + ','.join(map(str, )) + ']'
+        hydra_overrides.append(f'network.vit1_feature_strame={v1fs_str}')
+
+    if args.v2fs is not None:
+        v2fs_str = '[' + ','.join(map(str, )) + ']'
+        hydra_overrides.append(f'network.vit2_feature_strame={v2fs_str}')
+
+    sys.argv = [sys.argv[0]] + hydra_overrides + unknown_args
+
     main()
