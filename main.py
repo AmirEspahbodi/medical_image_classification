@@ -186,4 +186,4 @@ if __name__ == '__main__':
     args, unknown_args = parser.parse_known_args()
     print(args, unknown_args)
 
-    main(args.btl, args.v1fs, args.v2fs)
+    main(args.backbone_trainable_layers, args.vit1_feature_strame, args.vit2_feature_strame)
