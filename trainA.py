@@ -51,7 +51,7 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     if cfg.base.checkpoint:
         start_epoch = resume(cfg, model, optimizer)
 
-    print("--- Starting Training with Plan B (SWA + Plotting) ---")
+    print("--- Starting Training with Plan A (SWA) ---")
     model.train()
     for epoch in range(start_epoch, cfg.train.epochs):
         if loss_weight_scheduler:
