@@ -8,8 +8,8 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
 # Assuming these are your custom utility/loss imports
-# from src.utils.func import *
-# from src.loss import *
+from src.utils.func import *
+from src.loss import *
 
 # --- 1. Sharpness-Aware Minimization (SAM) Optimizer Implementation ---
 class SAM(torch.optim.Optimizer):
@@ -272,8 +272,6 @@ def save_weights(cfg, model, save_name):
     save_path = os.path.join(cfg.dataset.save_path, save_name)
     torch.save(model.state_dict(), save_path)
     print(f'Model weights saved at: {save_path}')
-
-def select_target_type(y, criterion): return y
 
 
 def resume(cfg, model, optimizer):
