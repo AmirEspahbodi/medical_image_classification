@@ -13,7 +13,7 @@ from trainB import train as train_c
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
-from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3, CoAtNetSideViTClassifier_4, CoAtNetSideViTClassifier_5
+from src.coatnet_models import CoAtNetSideViTClassifier_1, CoAtNetSideViTClassifier_2, CoAtNetSideViTClassifier_3, CoAtNetSideViTClassifier_3_reg, CoAtNetSideViTClassifier_4, CoAtNetSideViTClassifier_5
 from src.resnet_models import ResNetSideViTClassifier_1, ResNetSideViTClassifier_2, ResnetSideViTClassifier_3
 
 
