@@ -22,4 +22,4 @@ train:
   early_stopping_patience: 4
   scheduler_t0: 10
   scheduler_t_mult: 1
-  scheduler)eta_min: 1e-6
+  scheduler_eta_min: 1e-6
