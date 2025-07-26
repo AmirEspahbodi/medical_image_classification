@@ -19,6 +19,6 @@ train:
   swa_start_epoch: 8
 
   # for plan A
-  warmup_epochs: 2
+  # warmup_epochs: 2
   # label_smoothing: 0.1
   sam_start_epoch: 4
