@@ -1,284 +1,246 @@
 import os
-import math
-
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-
 from src.utils.func import *
 from src.loss import *
 from src.scheduler import *
-
-def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
-    device = cfg.base.device
-    optimizer = initialize_optimizer(cfg, model)
-    loss_function, loss_weight_scheduler = initialize_loss(cfg, train_dataset)
-    train_loader, val_loader = initialize_dataloader(cfg, train_dataset, val_dataset)
-
-    # check resume
-    start_epoch = 0
-    if cfg.base.checkpoint:
-        start_epoch = resume(cfg, model, optimizer)
-
-    # start training
-    model.train()
-    max_indicator = 0
-    for epoch in range(start_epoch, cfg.train.epochs):
-        # update loss weights
-        if loss_weight_scheduler:
-            weight = loss_weight_scheduler.step()
-            loss_function.weight = weight.to(device)
-
-        epoch_loss = 0
-        estimator.reset()
-        
-        # Create tqdm progress bar with total iterations and proper description
-        if cfg.base.progress:
-            progress = tqdm(
-                train_loader,
-                desc=f'Epoch {epoch + 1}/{cfg.train.epochs}',
-                total=len(train_loader),
-                unit='batch',
-                leave=True,
-                dynamic_ncols=True
-            )
-        else:
-            progress = train_loader
-            
-        for step, train_data in enumerate(progress):
-            scheduler_step = epoch + step / len(train_loader)
-            lr = adjust_learning_rate(cfg, optimizer, scheduler_step)
-
-            if cfg.dataset.preload_path:
-                X_side, key_states, value_states, y = train_data
-                key_states, value_states = key_states.to(device), value_states.to(device)
-                key_states = key_states.transpose(0, 1)
-                value_states = value_states.transpose(0, 1)
-            else:
-                X_lpm, X_side, y = train_data
-                X_lpm = X_lpm.to(device)
-                with torch.no_grad():
-                    _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
-
-            X_side, y = X_side.to(device), y.to(device)
-            y = select_target_type(y, cfg.train.criterion)
-
-            # forward
-            y_pred = model(X_side, key_states, value_states)
-            loss = loss_function(y_pred, y)      
-
-            # backward
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1)
-            optimizer.step()
-
-            epoch_loss += loss.item()
-            avg_loss = epoch_loss / (step + 1)
-
-            estimator.update(y_pred, y)
-            
-            # Update progress bar with detailed information
-            if cfg.base.progress:
-                progress.set_postfix({
-                    'Loss': f'{avg_loss:.6f}',
-                    'LR': f'{lr:.4f}'
-                })
-        
-        # Close progress bar at end of epoch
-        if cfg.base.progress:
-            progress.close()
-
-        train_scores = estimator.get_scores(4)
-        scores_txt = ', '.join(['{}: {}'.format(metric, score) for metric, score in train_scores.items()])
-        print('Training metrics:', scores_txt)
-
-        if epoch % cfg.train.save_interval == 0:
-            save_name = 'checkpoint.pt'
-            save_checkpoint(cfg, model, epoch, optimizer, save_name)
-
-        # validation performance
-        if epoch % cfg.train.eval_interval == 0:
-            eval(cfg, frozen_encoder, model, val_loader, estimator, device)
-            val_scores = estimator.get_scores(6)
-            scores_txt = ['{}: {}'.format(metric, score) for metric, score in val_scores.items()]
-            print_msg('Validation metrics:', scores_txt)
-
-            # save model
-            indicator = val_scores[cfg.train.indicator]
-            if indicator > max_indicator:
-                save_name = 'best_validation_weights.pt'
-                save_weights(cfg, model, save_name)
-                max_indicator = indicator
-
-    save_name = 'final_weights.pt'
-    save_weights(cfg, model, save_name)
-
-
-def evaluate(cfg, frozen_encoder, model, test_dataset, estimator):
-    test_loader = DataLoader(
-        test_dataset,
-        shuffle=False,
-        batch_size=cfg.train.batch_size,
-        num_workers=cfg.train.num_workers,
-        pin_memory=cfg.train.pin_memory
-    )
-
-    print('Running on Test set...')
-    eval(cfg, frozen_encoder, model, test_loader, estimator, cfg.base.device)
-
-    print('================Finished================')
-    test_scores = estimator.get_scores(6)
-    for metric, score in test_scores.items():
-        print('{}: {}'.format(metric, score))
-    print('Confusion Matrix:')
-    print(estimator.get_conf_mat())
-    print('========================================')
-
-
-def eval(cfg, frozen_encoder, model, dataloader, estimator, device):
-    model.eval()
-    torch.set_grad_enabled(False)
-
-    estimator.reset()
-    for test_data in dataloader:
-        if cfg.dataset.preload_path:
-            X_side, key_states, value_states, y = test_data
-            key_states, value_states = key_states.to(device), value_states.to(device)
-            key_states = key_states.transpose(0, 1)
-            value_states = value_states.transpose(0, 1)
-        else:
-            X_lpm, X_side, y = test_data
-            X_lpm = X_lpm.to(device)
-            with torch.no_grad():
-                _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
-
-        X_side, y = X_side.to(device), y.to(device)
-        y = select_target_type(y, cfg.train.criterion)
-
-        y_pred = model(X_side, key_states, value_states)
-        estimator.update(y_pred, y)
-
-    model.train()
-    torch.set_grad_enabled(True)
-
-
-# define data loader
-def initialize_dataloader(cfg, train_dataset, val_dataset):
-    batch_size = cfg.train.batch_size
-    num_workers = cfg.train.num_workers
-    pin_memory = cfg.train.pin_memory
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        drop_last=True,
-        pin_memory=pin_memory
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        drop_last=False,
-        pin_memory=pin_memory
-    )
-
-    return train_loader, val_loader
-
-
-# define loss and loss weights scheduler
-def initialize_loss(cfg, train_dataset):
-    criterion = cfg.train.criterion
-
-    weight = None
-    loss_weight_scheduler = None
-    loss_weight = cfg.train.loss_weight
-    if criterion == 'cross_entropy':
-        if loss_weight == 'balance':
-            loss_weight_scheduler = LossWeightsScheduler(train_dataset, 1)
-        elif loss_weight == 'dynamic':
-            loss_weight_scheduler = LossWeightsScheduler(train_dataset, cfg.train.loss_weight_decay_rate)
-        elif isinstance(loss_weight, list):
-            assert len(loss_weight) == len(train_dataset.classes)
-            weight = torch.as_tensor(loss_weight, dtype=torch.float32, device=cfg.base.device)
-        loss = nn.CrossEntropyLoss(weight=weight)
-    elif criterion == 'mean_square_error':
-        loss = nn.MSELoss()
-    elif criterion == 'mean_absolute_error':
-        loss = nn.L1Loss()
-    elif criterion == 'smooth_L1':
-        loss = nn.SmoothL1Loss()
-    elif criterion == 'kappa_loss':
-        loss = KappaLoss()
-    elif criterion == 'focal_loss':
-        loss = FocalLoss()
-    else:
-        raise NotImplementedError('Not implemented loss function.')
-
-    loss_function = WarpedLoss(loss, criterion)
-    return loss_function, loss_weight_scheduler
-
-
-# define optmizer
-def initialize_optimizer(cfg, model):
-    parameters = model.parameters()
-    solver = cfg.solver.optimizer
-    if solver == 'SGD':
-        optimizer = torch.optim.SGD(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            momentum=cfg.solver.momentum,
-            nesterov=cfg.solver.momentum,
-            weight_decay=cfg.solver.weight_decay
-        )
-    elif solver == 'ADAM':
-        optimizer = torch.optim.Adam(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            betas=cfg.solver.betas,
-            weight_decay=cfg.solver.weight_decay
-        )
-    elif solver == 'ADAMW':
-        optimizer = torch.optim.AdamW(
-            parameters,
-            lr=cfg.dataset.learning_rate,
-            betas=cfg.solver.betas,
-            weight_decay=cfg.solver.weight_decay
-        )
-    else:
-        raise NotImplementedError('Not implemented optimizer.')
-
-    return optimizer
-
-
-def adjust_learning_rate(cfg, optimizer, epoch):
-    """Decays the learning rate with half-cycle cosine after warmup"""
-    if epoch < cfg.train.warmup_epochs:
-        lr = cfg.dataset.learning_rate * epoch / cfg.train.warmup_epochs
-    else:
-        lr = cfg.dataset.learning_rate * 0.5 * (1. + math.cos(math.pi * (epoch - cfg.train.warmup_epochs) / (cfg.train.epochs - cfg.train.warmup_epochs)))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-    return lr
-
-
-def save_checkpoint(cfg, model, epoch, optimizer, save_name):
-    checkpoint = {
+def save_checkpoint(model, optimizer, scheduler, epoch, file_path):
+    """Saves model, optimizer, scheduler, and epoch to a file."""
+    state = {
         'epoch': epoch,
         'state_dict': model.state_dict(),
-        'optimizer' : optimizer.state_dict()
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
     }
-    checkpoint_path = os.path.join(cfg.dataset.save_path, save_name)
-    torch.save(checkpoint, checkpoint_path)
+    torch.save(state, file_path)
+    print(f"Checkpoint saved to {file_path}")
+
+def save_weights(model, file_path):
+    """Saves final model weights."""
+    torch.save(model.state_dict(), file_path)
+    print(f"Best model weights saved to {file_path}")
 
 
-def save_weights(cfg, model, save_name):
-    save_path = os.path.join(cfg.dataset.save_path, save_name)
-    torch.save(model.state_dict(), save_path)
-    print_msg('Model saved at {}'.format(save_path))
+class SAM(torch.optim.Optimizer):
+    def __init__(self, params, base_optimizer, rho=0.05, adaptive=False, **kwargs):
+        assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
+        defaults = dict(rho=rho, adaptive=adaptive, **kwargs)
+        super(SAM, self).__init__(params, defaults)
+        self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
+        self.param_groups = self.base_optimizer.param_groups
+        self.defaults.update(self.base_optimizer.defaults)
+
+    @torch.no_grad()
+    def first_step(self, zero_grad=False):
+        grad_norm = self._grad_norm()
+        for group in self.param_groups:
+            scale = group["rho"] / (grad_norm + 1e-12)
+            for p in group["params"]:
+                if p.grad is None: continue
+                self.state[p]["old_p"] = p.data.clone()
+                e_w = (torch.pow(p, 2) if group["adaptive"] else 1.0) * p.grad * scale.to(p)
+                p.add_(e_w)
+        if zero_grad: self.zero_grad()
+
+    @torch.no_grad()
+    def second_step(self, zero_grad=False):
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None: continue
+                p.data = self.state[p]["old_p"]
+        self.base_optimizer.step()
+        if zero_grad: self.zero_grad()
+
+    def _grad_norm(self):
+        shared_device = self.param_groups[0]["params"][0].device
+        norm = torch.norm(
+            torch.stack([
+                ((torch.abs(p) if group["adaptive"] else 1.0) * p.grad).norm(p=2).to(shared_device)
+                for group in self.param_groups for p in group["params"]
+                if p.grad is not None
+            ]),
+            p=2
+        )
+        return norm
+
+class ModernTrainer:
+    """
+    An advanced trainer class that encapsulates modern training techniques
+    to combat overfitting and improve generalization.
+    
+    New Features:
+    - SAM Optimizer: For finding flat, generalizable minima.
+    - Differential Learning Rates: Lower LR for backbone, higher for the head.
+    - OneCycleLR Scheduler: Advanced cyclical learning rate scheduling.
+    - Gradient Accumulation: Simulate larger batch sizes.
+    """
+    def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
+        self.cfg = cfg
+        self.device = cfg.base.device
+        self.model = model.to(self.device)
+        self.frozen_encoder = frozen_encoder.to(self.device)
+        self.estimator = estimator
+
+        # --- 2. Optimizer Setup with Differential Learning Rates ---
+        backbone_params = list(self.model.cnn_backbone.parameters())
+        head_params = [p for p in self.model.parameters() if not any(id(p) == id(bp) for bp in backbone_params)]
+        
+        param_groups = [
+            {'params': backbone_params, 'lr': self.cfg.train.backbone_lr}, # e.g., 1e-5
+            {'params': head_params, 'lr': self.cfg.train.learning_rate}      # e.g., 1e-4
+        ]
+
+        # --- Base optimizer is AdamW, wrapped by SAM ---
+        self.optimizer = SAM(
+            param_groups, 
+            torch.optim.AdamW, 
+            rho=self.cfg.train.sam_rho, # e.g., 0.05
+            adaptive=self.cfg.train.sam_adaptive, # e.g., True
+            weight_decay=self.cfg.train.weight_decay # e.g., 0.01
+        )
+
+        # --- 3. Loss Function: CrossEntropy with Label Smoothing ---
+        self.loss_fn = nn.CrossEntropyLoss(label_smoothing=self.cfg.train.label_smoothing)
+
+        # --- 4. DataLoaders & Gradient Accumulation ---
+        self.train_loader, self.val_loader = initialize_dataloader(train_dataset, val_dataset)
+        self.accumulation_steps = self.cfg.train.get('accumulation_steps', 1)
+
+        # --- 5. Scheduler: OneCycleLR ---
+        # A powerful scheduler that often leads to faster convergence.
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.optimizer.base_optimizer,
+            max_lr=[self.cfg.train.backbone_lr, self.cfg.train.learning_rate],
+            steps_per_epoch=len(self.train_loader) // self.accumulation_steps,
+            epochs=self.cfg.train.epochs,
+            pct_start=0.3 # Percentage of cycle to spend increasing LR
+        )
+
+        # --- 6. Automatic Mixed Precision (AMP) ---
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp)
+
+        # --- 7. Early Stopping ---
+        self.early_stopping_patience = self.cfg.train.early_stopping.patience
+        self.epochs_no_improve = 0
+        self.best_metric = -1.0
+
+    def _get_encoder_states(self, data):
+        if self.cfg.dataset.preload_path:
+            X_side, key_states, value_states, y = data
+            key_states, value_states = key_states.to(self.device, non_blocking=True).transpose(0, 1), value_states.to(self.device, non_blocking=True).transpose(0, 1)
+        else:
+            X_lpm, X_side, y = data
+            X_lpm = X_lpm.to(self.device, non_blocking=True)
+            with torch.no_grad(), torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+                _, key_states, value_states = self.frozen_encoder(X_lpm, interpolate_pos_encoding=True)
+        X_side, y = X_side.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
+        return X_side, key_states, value_states, y
+
+    def _train_one_epoch(self, epoch):
+        self.model.train()
+        self.estimator.reset()
+        epoch_loss = 0.0
+        progress = tqdm(self.train_loader, desc=f'Epoch {epoch + 1}/{self.cfg.train.epochs} [TRAIN]', unit='batch')
+
+        for step, train_data in enumerate(progress):
+            X_side, key_states, value_states, y = self._get_encoder_states(train_data)
+            y_for_loss = select_target_type(y, self.cfg.train.criterion)
+
+            # --- SAM's First Step (Ascent) ---
+            with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+                y_pred = self.model(X_side, key_states, value_states)
+                loss = self.loss_fn(y_pred, y_for_loss)
+                loss = loss / self.accumulation_steps # Scale loss for accumulation
+            
+            self.scaler.scale(loss).backward()
+            
+            if (step + 1) % self.accumulation_steps == 0:
+                self.scaler.unscale_(self.optimizer.base_optimizer)
+                self.optimizer.first_step(zero_grad=True)
+                self.scaler.update() # Update scaler after first step
+
+            # --- SAM's Second Step (Descent) ---
+            with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+                y_pred_2 = self.model(X_side, key_states, value_states)
+                loss_2 = self.loss_fn(y_pred_2, y_for_loss)
+                loss_2 = loss_2 / self.accumulation_steps
+            
+            self.scaler.scale(loss_2).backward()
+
+            if (step + 1) % self.accumulation_steps == 0:
+                self.scaler.unscale_(self.optimizer.base_optimizer)
+                self.optimizer.second_step(zero_grad=True)
+                self.scheduler.step() # Scheduler steps every optimizer update
+                self.scaler.update()
+
+            epoch_loss += loss.item() * self.accumulation_steps # Unscale for logging
+            avg_loss = epoch_loss / (step + 1)
+            
+            self.estimator.update(y_pred.detach(), y)
+            progress.set_postfix({'Loss': f'{avg_loss:.4f}', 'LR': f'{self.optimizer.param_groups[1]["lr"]:.2e}'})
+            
+        train_scores = self.estimator.get_scores()
+        return avg_loss, train_scores
+
+    def _validate_one_epoch(self, epoch):
+        self.model.eval()
+        self.estimator.reset()
+        val_loss = 0.0
+        progress = tqdm(self.val_loader, desc=f'Epoch {epoch + 1}/{self.cfg.train.epochs} [VAL]', unit='batch')
+
+        with torch.no_grad():
+            for step, val_data in enumerate(progress):
+                X_side, key_states, value_states, y = self._get_encoder_states(val_data)
+                y_for_loss = select_target_type(y, self.cfg.train.criterion)
+                with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+                    y_pred = self.model(X_side, key_states, value_states)
+                    loss = self.loss_fn(y_pred, y_for_loss)
+                val_loss += loss.item()
+                self.estimator.update(y_pred, y)
+        
+        avg_val_loss = val_loss / len(self.val_loader)
+        val_scores = self.estimator.get_scores()
+        return avg_val_loss, val_scores
+
+    def train(self):
+        print("--- Starting SOTA Training ---")
+        print(f"Optimizer: SAM(AdamW) | Scheduler: OneCycleLR | Loss: LabelSmoothing")
+        print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp}")
+        
+        for epoch in range(self.cfg.train.epochs):
+            train_loss, train_scores = self._train_one_epoch(epoch)
+            scores_txt = ', '.join([f'{m}: {s:.4f}' for m, s in train_scores.items()])
+            print(f"Epoch {epoch+1} Train | Loss: {train_loss:.4f} | {scores_txt}")
+
+            val_loss, val_scores = self._validate_one_epoch(epoch)
+            scores_txt = ', '.join([f'{m}: {s:.4f}' for m, s in val_scores.items()])
+            print(f"Epoch {epoch+1} Valid | Loss: {val_loss:.4f} | {scores_txt}")
+
+            indicator_metric = val_scores[self.cfg.train.indicator]
+            if indicator_metric > self.best_metric:
+                print(f"Validation metric improved from {self.best_metric:.4f} to {indicator_metric:.4f}.")
+                self.best_metric = indicator_metric
+                self.epochs_no_improve = 0
+                save_weights(self.model, os.path.join(self.cfg.dataset.save_path, 'best_validation_weights.pt'))
+            else:
+                self.epochs_no_improve += 1
+                print(f"Validation metric did not improve. Count: {self.epochs_no_improve}/{self.early_stopping_patience}")
+
+            if self.epochs_no_improve >= self.early_stopping_patience:
+                print("--- Early stopping triggered! ---")
+                break
+        
+        print("--- Finished Training ---")
+        save_weights(self.model, os.path.join(self.cfg.dataset.save_path, 'final_weights.pt'))
+
+def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
+    trainer = ModernTrainer(cfg, model, frozen_encoder, train_dataset, val_dataset, estimator)
+    trainer.train()
+
+def select_target_type(y, criterion):
+    return y
 
 
 def resume(cfg, model, optimizer):
