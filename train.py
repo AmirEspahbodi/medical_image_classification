@@ -140,7 +140,34 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     # --- Finalize and Save SWA Model ---
     print("\n--- Training finished. Finalizing SWA model. ---")
     # Update SWA batch norm stats
-    torch.optim.swa_utils.update_bn(train_loader, swa_model, device=device)
+    # The default `update_bn` utility can't handle our model's custom forward signature.
+    # We must manually run a forward pass on training data to update the BN layers.
+    swa_model.train()  # Set to train mode to update BN stats
+    with torch.no_grad():
+        # Iterate over a subset of the loader (e.g., 100 batches) to update the BN stats.
+        # This is usually sufficient and faster than using the whole dataset.
+        for i, train_data in enumerate(train_loader):
+            # if i >= 100:
+            #     break
+            
+            # IMPORTANT: This data preparation logic must EXACTLY match your training loop
+            if cfg.dataset.preload_path:
+                X_side, key_states, value_states, y = train_data
+                key_states, value_states = key_states.to(device), value_states.to(device)
+                key_states, value_states = key_states.transpose(0, 1), value_states.transpose(0, 1)
+            else:
+                X_lpm, X_side, y = train_data
+                X_lpm = X_lpm.to(device)
+                # The frozen_encoder is needed here to generate the states
+                _, key_states, value_states = frozen_encoder(X_lpm, interpolate_pos_encoding=True)
+
+            X_side = X_side.to(device)
+            
+            # Perform the forward pass with all three required arguments
+            swa_model(X_side, key_states, value_states)
+
+    print("--- SWA model BN stats updated. Saving final model. ---")
+
     # Save the final SWA model
     save_weights(cfg, swa_model, 'swa_model_final_weights.pt')
 
