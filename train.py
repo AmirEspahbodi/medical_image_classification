@@ -86,10 +86,10 @@ class ModernTrainer:
     An advanced trainer class that encapsulates modern training techniques
     to combat overfitting and improve generalization.
     
-    Version 4 Changes:
-    - Increased AdamW epsilon for stability with AMP.
-    - Forced SAM's grad_norm calculation to float32.
-    - Added loss sanity check to skip unstable steps.
+    Version 5 Changes:
+    - Optimizer steps are now run in float32 precision to prevent NaN errors.
+    - Reverted to CosineAnnealingWarmRestarts for better stability.
+    - Added explicit optimizer.zero_grad() after step.
     """
     def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
         self.cfg = cfg
@@ -110,13 +110,13 @@ class ModernTrainer:
         ]
 
         # --- Base optimizer is AdamW, wrapped by SAM ---
+        # NOTE: If instability persists, try lowering `rho` in your config (e.g., to 0.02 or 0.01)
         self.optimizer = SAM(
             param_groups, 
             torch.optim.AdamW, 
             rho=self.cfg.train.sam_rho,
             adaptive=self.cfg.train.sam_adaptive,
             weight_decay=self.cfg.train.weight_decay,
-            # *** FIX: Increased epsilon for stability in mixed precision ***
             eps=1e-7 
         )
 
@@ -128,13 +128,12 @@ class ModernTrainer:
         self.accumulation_steps = self.cfg.train.get('accumulation_steps', 1)
         self.clip_grad_norm_value = self.cfg.train.get('clip_grad_norm', 1.0)
 
-        # --- Scheduler: OneCycleLR ---
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        # --- Scheduler: Reverted to CosineAnnealing for better stability ---
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer.base_optimizer,
-            max_lr=[self.cfg.train.backbone_lr, self.cfg.train.learning_rate],
-            steps_per_epoch=len(self.train_loader) // self.accumulation_steps,
-            epochs=self.cfg.train.epochs,
-            pct_start=0.3
+            T_0=self.cfg.train.scheduler.t0,
+            T_mult=self.cfg.train.scheduler.t_mult,
+            eta_min=self.cfg.train.scheduler.eta_min
         )
 
         # --- Automatic Mixed Precision (AMP) - UPDATED API ---
@@ -177,7 +176,6 @@ class ModernTrainer:
                 y_pred = self.model(X_side, key_states, value_states)
                 loss1 = self.loss_fn(y_pred, y_for_loss)
 
-            # *** FIX: Sanity check the loss to prevent propagating NaNs ***
             if not torch.isfinite(loss1):
                 print(f"Warning: Unstable loss detected: {loss1.item()}. Skipping step.")
                 self.optimizer.zero_grad(set_to_none=True)
@@ -185,8 +183,9 @@ class ModernTrainer:
 
             self.scaler.scale(loss1).backward()
             
-            # This step perturbs the weights to find a region of flat loss
-            self.optimizer.first_step(zero_grad=True)
+            # --- Optimizer Step 1 (Perturbation) in float32 for stability ---
+            with torch.amp.autocast('cuda', enabled=False):
+                self.optimizer.first_step(zero_grad=True)
 
             # --- Second forward/backward pass (descent step) ---
             with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
@@ -194,21 +193,20 @@ class ModernTrainer:
                 loss2 = self.loss_fn(y_pred_2, y_for_loss)
             self.scaler.scale(loss2).backward()
 
-            # The second step does the actual parameter update
-            self.scaler.unscale_(self.optimizer.base_optimizer)
-            grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
-            
-            # Only step if the gradients are finite after clipping
-            if torch.isfinite(grad_norm):
-                self.optimizer.second_step(zero_grad=True)
-                self.scaler.update()
-                self.scheduler.step()
-            else:
-                print(f"Warning: Grad norm is not finite: {grad_norm}. Skipping optimizer step.")
-                # If grads are bad, we still need to zero them before the next step
-                self.optimizer.zero_grad(set_to_none=True)
+            # --- Optimizer Step 2 (Update) in float32 for stability ---
+            with torch.amp.autocast('cuda', enabled=False):
+                self.scaler.unscale_(self.optimizer.base_optimizer)
+                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
+                
+                if torch.isfinite(grad_norm):
+                    self.optimizer.second_step(zero_grad=False) # zero_grad is handled below
+                else:
+                    print(f"Warning: Grad norm is not finite: {grad_norm}. Skipping optimizer update.")
 
-            
+            self.scaler.update()
+            self.scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True) # Ensure grads are cleared for next step
+
             # Logging uses the first loss, as it's representative
             loss_val = loss1.item()
             epoch_loss += loss_val
@@ -241,14 +239,17 @@ class ModernTrainer:
         return avg_val_loss, val_scores
 
     def train(self):
-        print("--- Starting SOTA Training (v4 - Stabilized) ---")
-        print(f"Optimizer: SAM(AdamW) | Scheduler: OneCycleLR | Loss: LabelSmoothing")
+        print("--- Starting SOTA Training (v5 - Max Stability) ---")
+        print(f"Optimizer: SAM(AdamW) | Scheduler: CosineAnnealingWarmRestarts | Loss: LabelSmoothing")
         print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp} | Clip Norm: {self.clip_grad_norm_value}")
         
         for epoch in range(self.cfg.train.epochs):
             train_loss, train_scores = self._train_one_epoch(epoch)
             scores_txt = ', '.join([f'{m}: {s:.4f}' for m, s in train_scores.items()])
             print(f"Epoch {epoch+1} Train | Loss: {train_loss:.4f} | {scores_txt}")
+
+            # Scheduler step should be called after training epoch if it's not step-based
+            # self.scheduler.step() # For CosineAnnealingWarmRestarts, this is typically done per epoch
 
             val_loss, val_scores = self._validate_one_epoch(epoch)
             scores_txt = ', '.join([f'{m}: {s:.4f}' for m, s in val_scores.items()])
