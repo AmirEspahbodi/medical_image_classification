@@ -107,7 +107,7 @@ def main(cfg):
         ).to(cfg.base.device)
 
     estimator = Estimator(cfg.train.metrics, cfg.dataset.num_classes, cfg.train.criterion)
-    train_pipeline == None
+    train_pipeline = None
     if cfg.base.training_plan=="A":
         train_pipeline = train_a
     elif cfg.base.training_plan=="B":
@@ -116,7 +116,7 @@ def main(cfg):
         train_pipeline = train_c
     else:
         raise RuntimeError()
-    train_b(
+    train_pipeline(
         cfg=cfg,
         frozen_encoder=frozen_encoder,
         model=classifier_with_side_vits,
