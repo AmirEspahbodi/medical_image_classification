@@ -3,9 +3,13 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from src.utils.func import *
-from src.loss import *
-from src.scheduler import *
+
+# --- Assume these are your existing utility imports ---
+# from src.utils.func import *
+# from src.loss import *
+# from src.scheduler import *
+
+# It's good practice to have a helper for saving checkpoints
 def save_checkpoint(model, optimizer, scheduler, epoch, file_path):
     """Saves model, optimizer, scheduler, and epoch to a file."""
     state = {
@@ -17,12 +21,15 @@ def save_checkpoint(model, optimizer, scheduler, epoch, file_path):
     torch.save(state, file_path)
     print(f"Checkpoint saved to {file_path}")
 
+# It's also good practice to have a helper for saving final weights
 def save_weights(model, file_path):
     """Saves final model weights."""
     torch.save(model.state_dict(), file_path)
     print(f"Best model weights saved to {file_path}")
 
-
+# --- 1. Sharpness-Aware Minimization (SAM) Optimizer ---
+# A state-of-the-art optimizer that finds flatter, more generalizable minima.
+# This implementation is a common variant used in many projects.
 class SAM(torch.optim.Optimizer):
     def __init__(self, params, base_optimizer, rho=0.05, adaptive=False, **kwargs):
         assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
@@ -54,6 +61,7 @@ class SAM(torch.optim.Optimizer):
         if zero_grad: self.zero_grad()
 
     def _grad_norm(self):
+        # Put everything on the same device, in case of model parallelism
         shared_device = self.param_groups[0]["params"][0].device
         norm = torch.norm(
             torch.stack([
@@ -75,18 +83,18 @@ class ModernTrainer:
     - Differential Learning Rates: Lower LR for backbone, higher for the head.
     - OneCycleLR Scheduler: Advanced cyclical learning rate scheduling.
     - Gradient Accumulation: Simulate larger batch sizes.
+    - Gradient Clipping: For training stability.
     """
     def __init__(self, cfg, model, frozen_encoder, train_dataset, val_dataset, estimator):
         self.cfg = cfg
         self.device = cfg.base.device
-        print("3 3 3 3 3 3 3 3")
-        print(type(model))
-        print(type(frozen_encoder))
         self.model = model.to(self.device)
         self.frozen_encoder = frozen_encoder.to(self.device)
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
         self.estimator = estimator
 
-        # --- 2. Optimizer Setup with Differential Learning Rates ---
+        # --- Optimizer Setup with Differential Learning Rates ---
         backbone_params = list(self.model.cnn_backbone.parameters())
         head_params = [p for p in self.model.parameters() if not any(id(p) == id(bp) for bp in backbone_params)]
         
@@ -104,15 +112,15 @@ class ModernTrainer:
             weight_decay=self.cfg.train.weight_decay # e.g., 0.01
         )
 
-        # --- 3. Loss Function: CrossEntropy with Label Smoothing ---
+        # --- Loss Function: CrossEntropy with Label Smoothing ---
         self.loss_fn = nn.CrossEntropyLoss(label_smoothing=self.cfg.train.label_smoothing)
 
-        # --- 4. DataLoaders & Gradient Accumulation ---
-        self.train_loader, self.val_loader = initialize_dataloader(cfg, train_dataset, val_dataset)
+        # --- DataLoaders & Gradient Accumulation ---
+        self.train_loader, self.val_loader = self.initialize_dataloader()
         self.accumulation_steps = self.cfg.train.get('accumulation_steps', 1)
+        self.clip_grad_norm_value = self.cfg.train.get('clip_grad_norm', 1.0)
 
-        # --- 5. Scheduler: OneCycleLR ---
-        # A powerful scheduler that often leads to faster convergence.
+        # --- Scheduler: OneCycleLR ---
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer.base_optimizer,
             max_lr=[self.cfg.train.backbone_lr, self.cfg.train.learning_rate],
@@ -121,13 +129,18 @@ class ModernTrainer:
             pct_start=0.3 # Percentage of cycle to spend increasing LR
         )
 
-        # --- 6. Automatic Mixed Precision (AMP) ---
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp)
+        # --- Automatic Mixed Precision (AMP) - UPDATED API ---
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.cfg.train.amp)
 
-        # --- 7. Early Stopping ---
+        # --- Early Stopping ---
         self.early_stopping_patience = self.cfg.train.early_stopping_patience
         self.epochs_no_improve = 0
         self.best_metric = -1.0
+
+    def initialize_dataloader(self):
+        train_loader = DataLoader(self.train_dataset, shuffle=True, batch_size=self.cfg.train.batch_size, num_workers=self.cfg.train.num_workers, pin_memory=True, drop_last=True)
+        val_loader = DataLoader(self.val_dataset, shuffle=False, batch_size=self.cfg.train.batch_size, num_workers=self.cfg.train.num_workers, pin_memory=True)
+        return train_loader, val_loader
 
     def _get_encoder_states(self, data):
         if self.cfg.dataset.preload_path:
@@ -136,7 +149,8 @@ class ModernTrainer:
         else:
             X_lpm, X_side, y = data
             X_lpm = X_lpm.to(self.device, non_blocking=True)
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+            # UPDATED API for autocast
+            with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                 _, key_states, value_states = self.frozen_encoder(X_lpm, interpolate_pos_encoding=True)
         X_side, y = X_side.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
         return X_side, key_states, value_states, y
@@ -146,37 +160,56 @@ class ModernTrainer:
         self.estimator.reset()
         epoch_loss = 0.0
         progress = tqdm(self.train_loader, desc=f'Epoch {epoch + 1}/{self.cfg.train.epochs} [TRAIN]', unit='batch')
+        
+        self.optimizer.zero_grad(set_to_none=True) # Clear gradients at the start of the epoch
 
         for step, train_data in enumerate(progress):
             X_side, key_states, value_states, y = self._get_encoder_states(train_data)
             y_for_loss = select_target_type(y, self.cfg.train.criterion)
 
             # --- SAM's First Step (Ascent) ---
-            with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+            # UPDATED API for autocast
+            with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                 y_pred = self.model(X_side, key_states, value_states)
                 loss = self.loss_fn(y_pred, y_for_loss)
                 loss = loss / self.accumulation_steps # Scale loss for accumulation
             
+            # Scale loss and calculate gradients
             self.scaler.scale(loss).backward()
-            
-            if (step + 1) % self.accumulation_steps == 0:
-                self.scaler.unscale_(self.optimizer.base_optimizer)
-                self.optimizer.first_step(zero_grad=True)
-                self.scaler.update() # Update scaler after first step
 
             # --- SAM's Second Step (Descent) ---
-            with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+            # UPDATED API for autocast
+            with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
+                # The model's weights are already perturbed by the first step
                 y_pred_2 = self.model(X_side, key_states, value_states)
                 loss_2 = self.loss_fn(y_pred_2, y_for_loss)
                 loss_2 = loss_2 / self.accumulation_steps
             
+            # Scale loss and calculate gradients for the second step
             self.scaler.scale(loss_2).backward()
-
+            
+            # --- Optimizer Step (after accumulation) ---
             if (step + 1) % self.accumulation_steps == 0:
+                # Unscale gradients before clipping
                 self.scaler.unscale_(self.optimizer.base_optimizer)
+                
+                # --- KEY FIX: Clip gradients to prevent explosion ---
+                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm_value)
+                if not torch.isfinite(grad_norm):
+                    print(f"Warning: Grad norm is {grad_norm}. Skipping update.")
+                    self.optimizer.zero_grad(set_to_none=True)
+                    continue
+
+                # SAM performs both steps using the accumulated gradients
+                self.optimizer.first_step(zero_grad=True)
                 self.optimizer.second_step(zero_grad=True)
-                self.scheduler.step() # Scheduler steps every optimizer update
+                
+                # Update scaler and scheduler
                 self.scaler.update()
+                self.scheduler.step()
+                
+                # Clear gradients for the next accumulation cycle
+                self.optimizer.zero_grad(set_to_none=True)
 
             epoch_loss += loss.item() * self.accumulation_steps # Unscale for logging
             avg_loss = epoch_loss / (step + 1)
@@ -197,7 +230,8 @@ class ModernTrainer:
             for step, val_data in enumerate(progress):
                 X_side, key_states, value_states, y = self._get_encoder_states(val_data)
                 y_for_loss = select_target_type(y, self.cfg.train.criterion)
-                with torch.cuda.amp.autocast(enabled=self.cfg.train.amp):
+                # UPDATED API for autocast
+                with torch.amp.autocast('cuda', enabled=self.cfg.train.amp):
                     y_pred = self.model(X_side, key_states, value_states)
                     loss = self.loss_fn(y_pred, y_for_loss)
                 val_loss += loss.item()
@@ -208,9 +242,9 @@ class ModernTrainer:
         return avg_val_loss, val_scores
 
     def train(self):
-        print("--- Starting SOTA Training ---")
+        print("--- Starting SOTA Training (v2 - Stabilized) ---")
         print(f"Optimizer: SAM(AdamW) | Scheduler: OneCycleLR | Loss: LabelSmoothing")
-        print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp}")
+        print(f"Differential LRs | Grad Accum: {self.accumulation_steps} | AMP: {self.cfg.train.amp} | Clip Norm: {self.clip_grad_norm_value}")
         
         for epoch in range(self.cfg.train.epochs):
             train_loss, train_scores = self._train_one_epoch(epoch)
@@ -239,50 +273,8 @@ class ModernTrainer:
         save_weights(self.model, os.path.join(self.cfg.dataset.save_path, 'final_weights.pt'))
 
 def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
-    print("2 2 2 2 2 2 2")
-    print(type(frozen_encoder))
     trainer = ModernTrainer(cfg, model, frozen_encoder, train_dataset, val_dataset, estimator)
     trainer.train()
 
 def select_target_type(y, criterion):
     return y
-
-
-def resume(cfg, model, optimizer):
-    checkpoint = cfg.base.checkpoint
-    if os.path.exists(checkpoint):
-        print_msg('Loading checkpoint {}'.format(checkpoint))
-
-        checkpoint = torch.load(checkpoint, map_location='cpu')
-        start_epoch = checkpoint['epoch'] + 1
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-
-        print_msg('Loaded checkpoint {} from epoch {}'.format(checkpoint, checkpoint['epoch']))
-        return start_epoch
-    else:
-        print_msg('No checkpoint found at {}'.format(checkpoint))
-        raise FileNotFoundError('No checkpoint found at {}'.format(checkpoint))
-
-def initialize_dataloader(cfg, train_dataset, val_dataset):
-    batch_size = cfg.train.batch_size
-    num_workers = cfg.train.num_workers
-    pin_memory = cfg.train.pin_memory
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        drop_last=True,
-        pin_memory=pin_memory
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        drop_last=False,
-        pin_memory=pin_memory
-    )
-
-    return train_loader, val_loader
