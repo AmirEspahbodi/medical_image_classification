@@ -90,7 +90,7 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
     
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
-    print("--- Starting Training with Plan A (SAM Optimizer) ---")
+    print("--- Starting Training with Plan B (SAM Optimizer) ---")
     model.train()
     for epoch in range(start_epoch, cfg.train.epochs):
         lr = adjust_learning_rate(cfg, optimizer, epoch)
