@@ -318,3 +318,20 @@ def initialize_dataloader(cfg, train_dataset, val_dataset):
     )
 
     return train_loader, val_loader
+
+
+def resume(cfg, model, optimizer):
+    checkpoint = cfg.base.checkpoint
+    if os.path.exists(checkpoint):
+        print_msg('Loading checkpoint {}'.format(checkpoint))
+
+        checkpoint = torch.load(checkpoint, map_location='cpu')
+        start_epoch = checkpoint['epoch'] + 1
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+
+        print_msg('Loaded checkpoint {} from epoch {}'.format(checkpoint, checkpoint['epoch']))
+        return start_epoch
+    else:
+        print_msg('No checkpoint found at {}'.format(checkpoint))
+        raise FileNotFoundError('No checkpoint found at {}'.format(checkpoint))
