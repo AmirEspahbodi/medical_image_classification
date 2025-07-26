@@ -166,7 +166,7 @@ def train(cfg, frozen_encoder, model, train_dataset, val_dataset, estimator):
                 progress.set_postfix(Loss=f'{epoch_loss/(step+1):.4f}', LR=f"{lr:.2e}")
         
         # --- Validation & Saving Best Model ---
-        eval(cfg, frozen_encoder, model, val_loader, estimator, device)
+        eval(cfg, frozen_encoder, model, val_loader, estimator, device, loss_function)
         val_scores = estimator.get_scores(6)
 
         avg_train_loss = epoch_loss / len(train_loader)
@@ -208,7 +208,7 @@ def save_plots(history, save_path):
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    loss_plot_path = os.path.join(save_path, 'loss_plot.png')
+    loss_plot_path = os.path.join(save_path, f'{cfg.network.model}_planb_loss_plot.png')
     plt.savefig(loss_plot_path)
     plt.close()
     print(f"Loss plot saved to {loss_plot_path}")
@@ -222,7 +222,7 @@ def save_plots(history, save_path):
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    acc_plot_path = os.path.join(save_path, 'accuracy_plot.png')
+    acc_plot_path = os.path.join(save_path, f'{cfg.network.model}_planb_accuracy_plot.png')
     plt.savefig(acc_plot_path)
     plt.close()
     print(f"Accuracy plot saved to {acc_plot_path}")
@@ -312,7 +312,6 @@ def initialize_dataloader(cfg, train_dataset, val_dataset):
     val_loader = DataLoader(val_dataset, batch_size=cfg.train.batch_size, shuffle=False, num_workers=cfg.train.num_workers)
     return train_loader, val_loader
 
-# ✨ Modified eval function to return loss
 def eval(cfg, frozen_encoder, model, dataloader, estimator, device, loss_function):
     model.eval()
     torch.set_grad_enabled(False)
