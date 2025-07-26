@@ -1,15 +1,17 @@
 import os
 import random
 import torch
+import sys
+import argparse
 
 import hydra
 import numpy as np
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, ListConfig
 
 from src.utils.func import *
 from trainA import train as train_a
 from trainB import train as train_b
-from trainB import train as train_c
+from trainC import train as train_c, evaluate
 from src.utils.metrics import Estimator
 from data.builder import generate_dataset
 from src.builder import generate_model, load_weights
@@ -22,6 +24,54 @@ def main(cfg):
     # print configuration
     print_msg('LOADING CONFIG FILE')
     print(OmegaConf.to_yaml(cfg))
+
+    # --- Start of new validation block ---
+    # This block validates the command-line arguments after they've been loaded by Hydra.
+    print_msg('VALIDATING RUNTIME ARGUMENTS')
+    validation_passed = True
+
+    # Validate backbone_trainable_layers (btl)
+    if hasattr(cfg.network, 'backbone_trainable_layers'):
+        btl = cfg.network.backbone_trainable_layers
+        # Ensure it's a list and all values are within the allowed range
+        if not isinstance(btl, ListConfig) or not all(x in [1, 2, 3, 4] for x in btl):
+            print(f"ERROR: Invalid 'backbone_trainable_layers': {btl}. All values must be in [1, 2, 3, 4].")
+            validation_passed = False
+        else:
+            print(f"  - OK: Backbone trainable layers set to: {btl}")
+
+    # Validate vit1_feature_strame (v1fs)
+    if hasattr(cfg.network, 'vit1_feature_strame'):
+        v1fs = cfg.network.vit1_feature_strame
+        # Ensure it's a list of two numbers, each between 1 and 4
+        if not isinstance(v1fs, ListConfig) or len(v1fs) != 2 or not all(1 <= x <= 4 for x in v1fs):
+            print(f"ERROR: Invalid 'vit1_feature_strame': {v1fs}. Must be two numbers, each between 1 and 4.")
+            validation_passed = False
+        else:
+            print(f"  - OK: ViT1 Feature Strame set to: {v1fs}")
+
+    # Validate vit2_feature_strame (v2fs)
+    if hasattr(cfg.network, 'vit2_feature_strame'):
+        v2fs = cfg.network.vit2_feature_strame
+        # Ensure it's a list of two numbers, each between 1 and 4
+        if not isinstance(v2fs, ListConfig) or len(v2fs) != 2 or not all(1 <= x <= 4 for x in v2fs):
+            print(f"ERROR: Invalid 'vit2_feature_strame': {v2fs}. Must be two numbers, each between 1 and 4.")
+            validation_passed = False
+        else:
+            print(f"  - OK: ViT2 Feature Strame set to: {v2fs}")
+
+    if not validation_passed:
+        print_msg("Argument validation failed. Exiting.", warning=True)
+        sys.exit(1)
+    # --- End of new validation block ---
+    
+    print(cfg.network.backbone_trainable_layers)
+    print(cfg.network.vit1_feature_strame)
+    print(cfg.network.vit2_feature_strame)
+    print(type(cfg.network.backbone_trainable_layers))
+    print(type(cfg.network.vit1_feature_strame))
+    print(type(cfg.network.vit2_feature_strame))
+
 
     # create folder
     save_path = cfg.dataset.save_path
@@ -132,4 +182,28 @@ def set_seed(seed, deterministic=False):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Run training with custom arguments for Hydra.")
+    parser.add_argument('--btl', '--backbone_trainable_layers', type=int, nargs='+',
+                        help='List of backbone layers to train (e.g., 1 2 3 4).')
+    parser.add_argument('--v1fs', '--vit1_feature_strame', type=int, nargs=2,
+                        help='Two numbers for ViT1 feature stride, each between 1 and 4 (e.g., 1 4).')
+    parser.add_argument('--v2fs', '--vit2_feature_strame', type=int, nargs=2,
+                        help='Two numbers for ViT2 feature stride, each between 1 and 4 (e.g., 2 3).')
+    args, unknown_args = parser.parse_known_args()
+
+    hydra_overrides = []
+    if args.btl is not None:
+        btl_str = '[' + ','.join(map(str, args.btl)) + ']'
+        hydra_overrides.append(f'network.backbone_trainable_layers={btl_str}')
+
+    if args.v1fs is not None:
+        v1fs_str = '[' + ','.join(map(str, args.v1fs)) + ']'
+        hydra_overrides.append(f'network.vit1_feature_strame={v1fs_str}')
+
+    if args.v2fs is not None:
+        v2fs_str = '[' + ','.join(map(str, args.v2fs)) + ']'
+        hydra_overrides.append(f'network.vit2_feature_strame={v2fs_str}')
+
+    sys.argv = [sys.argv[0]] + hydra_overrides + unknown_args
+
     main()
