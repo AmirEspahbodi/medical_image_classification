@@ -1,12 +1,13 @@
 import torch
 from torchmetrics import (
+    AUROC,
     Accuracy,
+    ConfusionMatrix,
+    F1Score,
     Precision,
     Recall,
-    F1Score,
-    AUROC,
-    ConfusionMatrix,
 )
+
 from src.utils.func import select_target_type
 
 
