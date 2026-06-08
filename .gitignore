@@ -201,3 +201,4 @@ result*/
 splited_chest_xray*/
 *.xlsx
 *.xlsx#
+datasets/*

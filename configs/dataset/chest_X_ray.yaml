@@ -1,15 +1,13 @@
 name: chest_X_ray
-data_path: E:\medical_image_classification\splited_chest_xray_2
-preload_path: E:\medical_image_classification\preload_chest_xray
-save_path: E:\medical_image_classification\result
+data_path: D:\amir_es\medical_image_classification\datasets\chest_xray
+preload_path: D:\amir_es\medical_image_classification\datasets\preload_chest_xray
+save_path: D:\amir_es\medical_image_classification\result
 input_size: 512 # image resolution for the LPM
 num_classes: 2 # number of classes
 mean: [0.5] # 'auto' or a list of three numbers for RGB
 std: [0.5] # 'auto' or a list of three numbers for RGB
 learning_rate: 0.0005 # dataset-specific learning rate
 image_channel_num: 3
-
-
 
 # name: chest_X_ray
 # data_path: /content/dataset/splited_chest_xray
