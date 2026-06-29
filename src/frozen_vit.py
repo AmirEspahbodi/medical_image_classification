@@ -6,7 +6,7 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-
+from transformers import ViTConfig
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -16,18 +16,15 @@ from transformers.modeling_outputs import (
 )
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import (
-    find_pruneable_heads_and_indices,
     prune_linear_layer,
 )
-from transformers.utils import (
+from transformers.utils import logging
+from transformers.utils.doc import (
     add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
-    logging,
     replace_return_docstrings,
 )
-from transformers.models.vit.configuration_vit import ViTConfig
-
 
 logger = logging.get_logger(__name__)
 

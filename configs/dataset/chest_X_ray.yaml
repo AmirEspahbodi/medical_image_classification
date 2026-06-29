@@ -1,6 +1,6 @@
 name: chest_X_ray
 data_path: D:\amir_es\medical_image_classification\datasets\chest_xray
-preload_path: D:\amir_es\medical_image_classification\datasets\preload_chest_xray
+preload_path: E:\preload_chest_xray
 save_path: D:\amir_es\medical_image_classification\result
 input_size: 512 # image resolution for the LPM
 num_classes: 2 # number of classes
